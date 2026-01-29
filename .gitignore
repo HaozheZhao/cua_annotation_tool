@@ -1,0 +1,27 @@
+# Output files
+output/
+*.zip
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Annotation state (optional - uncomment to exclude)
+# annotations.json
+# coordinate_adjustments.json
