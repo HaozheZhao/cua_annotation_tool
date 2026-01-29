@@ -21,6 +21,20 @@ CSV_FILE = Path(os.environ.get('CUA_CSV_FILE', './task_assignments.csv'))
 OUTPUT_DIR = Path(os.environ.get('CUA_OUTPUT_DIR', './output'))
 ANNOTATIONS_FILE = Path(os.environ.get('CUA_ANNOTATIONS_FILE', './annotations.json'))
 
+def parse_list_field(value):
+    """Parse a comma-separated or JSON list field."""
+    if not value:
+        return []
+    value = value.strip()
+    if value.startswith('['):
+        try:
+            return json.loads(value)
+        except:
+            pass
+    # Split by comma or semicolon
+    items = [item.strip() for item in value.replace(';', ',').split(',')]
+    return [item for item in items if item]
+
 def load_tasks():
     """Load tasks from CSV file."""
     tasks = {}
@@ -34,7 +48,11 @@ def load_tasks():
                         'task_id': task_id,
                         'instruction': row.get('instruction', ''),
                         'worker_id': row.get('worker_id', ''),
-                        'worker_name': row.get('worker_name', '')
+                        'worker_name': row.get('worker_name', ''),
+                        # New fields
+                        'osworld_overlap': parse_list_field(row.get('osworld_overlap', '')),
+                        'custom_nodes': parse_list_field(row.get('custom_nodes', '')),
+                        'related_apps': parse_list_field(row.get('related_apps', ''))
                     }
     return tasks
 
@@ -398,6 +416,94 @@ HTML_TEMPLATE = '''
             font-family: inherit;
         }
         .pass-reason-input::placeholder { color: #555; }
+        .knowledge-panel {
+            background: linear-gradient(135deg, #1a1a3e 0%, #16213e 100%);
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #4a4a8a;
+        }
+        .knowledge-panel h4 { color: #9c88ff; margin-bottom: 12px; }
+        .knowledge-section {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .knowledge-item {
+            background: #0d1117;
+            padding: 12px;
+            border-radius: 6px;
+        }
+        .knowledge-item label {
+            display: block;
+            color: #9c88ff;
+            font-size: 0.85em;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        .knowledge-item .label-hint {
+            color: #666;
+            font-size: 0.75em;
+            font-weight: normal;
+        }
+        .knowledge-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 8px;
+            min-height: 28px;
+        }
+        .knowledge-tag {
+            display: inline-flex;
+            align-items: center;
+            background: #4a4a8a;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 15px;
+            font-size: 0.8em;
+        }
+        .knowledge-tag .remove-tag {
+            margin-left: 6px;
+            cursor: pointer;
+            opacity: 0.7;
+        }
+        .knowledge-tag .remove-tag:hover { opacity: 1; }
+        .knowledge-input-row {
+            display: flex;
+            gap: 6px;
+        }
+        .knowledge-input {
+            flex: 1;
+            padding: 6px 10px;
+            border: 1px solid #444;
+            border-radius: 4px;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            font-size: 0.85em;
+        }
+        .knowledge-add-btn {
+            padding: 6px 12px;
+            background: #4a4a8a;
+            border: none;
+            border-radius: 4px;
+            color: white;
+            cursor: pointer;
+            font-size: 0.85em;
+        }
+        .knowledge-add-btn:hover { background: #5a5a9a; }
+        .step-instructions-input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #444;
+            border-radius: 6px;
+            background: #0d1117;
+            color: #e0e0e0;
+            resize: vertical;
+            min-height: 60px;
+            font-family: inherit;
+            margin-top: 8px;
+        }
         .step-nav {
             display: flex;
             align-items: center;
@@ -1001,6 +1107,54 @@ HTML_TEMPLATE = '''
                               onchange="updatePassReason(this.value)">${ann.pass_reason || ''}</textarea>
                 </div>
 
+                <div class="knowledge-panel">
+                    <h4>📚 Knowledge Points & Related Apps (知识点与相关应用)</h4>
+                    <div class="knowledge-section">
+                        <div class="knowledge-item">
+                            <label>OSWorld Overlap <span class="label-hint">(与OSWorld重叠)</span></label>
+                            <div class="knowledge-tags" id="osworld-tags">
+                                ${(ann.osworld_overlap || task.osworld_overlap || []).map(tag =>
+                                    `<span class="knowledge-tag">${tag}<span class="remove-tag" onclick="removeTag('osworld_overlap', '${tag}')">×</span></span>`
+                                ).join('')}
+                            </div>
+                            <div class="knowledge-input-row">
+                                <input type="text" class="knowledge-input" id="osworld-input" placeholder="Add tag...">
+                                <button class="knowledge-add-btn" onclick="addTag('osworld_overlap', 'osworld-input')">+</button>
+                            </div>
+                        </div>
+                        <div class="knowledge-item">
+                            <label>Custom Nodes <span class="label-hint">(自定义节点)</span></label>
+                            <div class="knowledge-tags" id="custom-tags">
+                                ${(ann.custom_nodes || task.custom_nodes || []).map(tag =>
+                                    `<span class="knowledge-tag">${tag}<span class="remove-tag" onclick="removeTag('custom_nodes', '${tag}')">×</span></span>`
+                                ).join('')}
+                            </div>
+                            <div class="knowledge-input-row">
+                                <input type="text" class="knowledge-input" id="custom-input" placeholder="Add tag...">
+                                <button class="knowledge-add-btn" onclick="addTag('custom_nodes', 'custom-input')">+</button>
+                            </div>
+                        </div>
+                        <div class="knowledge-item">
+                            <label>Related Apps <span class="label-hint">(相关应用)</span></label>
+                            <div class="knowledge-tags" id="apps-tags">
+                                ${(ann.related_apps || task.related_apps || []).map(tag =>
+                                    `<span class="knowledge-tag">${tag}<span class="remove-tag" onclick="removeTag('related_apps', '${tag}')">×</span></span>`
+                                ).join('')}
+                            </div>
+                            <div class="knowledge-input-row">
+                                <input type="text" class="knowledge-input" id="apps-input" placeholder="Add app...">
+                                <button class="knowledge-add-btn" onclick="addTag('related_apps', 'apps-input')">+</button>
+                            </div>
+                        </div>
+                    </div>
+                    <label style="color:#888;font-size:0.85em;display:block;margin-bottom:4px;">
+                        Step-by-Step Instructions (分步说明):
+                    </label>
+                    <textarea class="step-instructions-input" id="step-instructions"
+                              placeholder="Describe the step-by-step instructions for this task..."
+                              onchange="updateStepInstructions(this.value)">${ann.step_by_step_instructions || ''}</textarea>
+                </div>
+
                 <div class="step-nav">
                     <button onclick="prevStep()" ${currentStepIndex === 0 ? 'disabled' : ''}>← Prev</button>
                     <span class="step-info">Step ${currentStepIndex + 1} / ${totalSteps}</span>
@@ -1099,9 +1253,55 @@ HTML_TEMPLATE = '''
             await saveAnnotation();
         }
 
+        async function updateStepInstructions(text) {
+            if (!currentTaskId) return;
+            if (!annotations[currentTaskId]) annotations[currentTaskId] = {};
+            annotations[currentTaskId].step_by_step_instructions = text;
+            await saveAnnotation();
+        }
+
+        async function addTag(field, inputId) {
+            if (!currentTaskId) return;
+            const input = document.getElementById(inputId);
+            const value = input.value.trim();
+            if (!value) return;
+
+            if (!annotations[currentTaskId]) annotations[currentTaskId] = {};
+            if (!annotations[currentTaskId][field]) {
+                // Initialize from task data if available
+                const task = tasks[currentTaskId];
+                annotations[currentTaskId][field] = [...(task[field] || [])];
+            }
+
+            // Add if not already exists
+            if (!annotations[currentTaskId][field].includes(value)) {
+                annotations[currentTaskId][field].push(value);
+                await saveAnnotation();
+                renderContent();
+            }
+            input.value = '';
+        }
+
+        async function removeTag(field, value) {
+            if (!currentTaskId) return;
+            if (!annotations[currentTaskId]) annotations[currentTaskId] = {};
+            if (!annotations[currentTaskId][field]) {
+                const task = tasks[currentTaskId];
+                annotations[currentTaskId][field] = [...(task[field] || [])];
+            }
+
+            const idx = annotations[currentTaskId][field].indexOf(value);
+            if (idx > -1) {
+                annotations[currentTaskId][field].splice(idx, 1);
+                await saveAnnotation();
+                renderContent();
+            }
+        }
+
         async function saveAnnotation() {
             if (!currentTaskId) return;
             const ann = annotations[currentTaskId] || {};
+            const task = tasks[currentTaskId] || {};
             await fetch('/api/annotate', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -1109,7 +1309,11 @@ HTML_TEMPLATE = '''
                     task_id: currentTaskId,
                     mark: ann.mark,
                     pass_reason: ann.pass_reason || '',
-                    scores: ann.scores || {}
+                    scores: ann.scores || {},
+                    step_by_step_instructions: ann.step_by_step_instructions || '',
+                    osworld_overlap: ann.osworld_overlap || task.osworld_overlap || [],
+                    custom_nodes: ann.custom_nodes || task.custom_nodes || [],
+                    related_apps: ann.related_apps || task.related_apps || []
                 })
             });
         }
@@ -1477,12 +1681,20 @@ def api_annotate():
     mark = data.get('mark')
     pass_reason = data.get('pass_reason', '')
     scores = data.get('scores', {})
+    step_by_step_instructions = data.get('step_by_step_instructions', '')
+    osworld_overlap = data.get('osworld_overlap', [])
+    custom_nodes = data.get('custom_nodes', [])
+    related_apps = data.get('related_apps', [])
 
     annotations = load_annotations()
     annotations[task_id] = {
         'mark': mark,
         'pass_reason': pass_reason,
-        'scores': scores
+        'scores': scores,
+        'step_by_step_instructions': step_by_step_instructions,
+        'osworld_overlap': osworld_overlap,
+        'custom_nodes': custom_nodes,
+        'related_apps': related_apps
     }
     save_annotations(annotations)
 
@@ -1655,24 +1867,28 @@ def api_export():
 
             traj.append({
                 'index': step['index'],
+                'action_type': step['action'],
                 'code': code,
-                'screenshot': f"task_{task_id}/{screenshot_name}",
-                'justification': step['justification']
+                'screenshot': f"step_{step['index']}.png"
             })
 
         cap.release()
 
-        # Build output with annotator evaluation
+        # Get knowledge points and related apps (from annotation or task)
+        osworld_overlap = ann.get('osworld_overlap') or task_info.get('osworld_overlap', [])
+        custom_nodes = ann.get('custom_nodes') or task_info.get('custom_nodes', [])
+        related_apps = ann.get('related_apps') or task_info.get('related_apps', [])
+
+        # Build output with new format
         cua_data = {
             'task_id': int(task_id) if task_id.isdigit() else task_id,
             'instruction': task_info.get('instruction', ''),
-            'pass_reason': ann.get('pass_reason', ''),
-            'scores': {
-                'correctness': ann.get('scores', {}).get('correctness', 0),
-                'difficulty': ann.get('scores', {}).get('difficulty', 0),
-                'knowledge_richness': ann.get('scores', {}).get('knowledge_richness', 0),
-                'task_value': ann.get('scores', {}).get('task_value', 0)
+            'step_by_step_instructions': ann.get('step_by_step_instructions', ''),
+            'knowledge_points': {
+                'osworld_overlap': osworld_overlap,
+                'custom_nodes': custom_nodes
             },
+            'related_apps': related_apps,
             'traj': traj
         }
 
