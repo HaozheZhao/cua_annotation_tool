@@ -8,6 +8,7 @@ A web-based human verification system for CUA-SFT (Computer Use Agent - Supervis
 - **Step-by-step Review**: View each action step with screenshots and coordinates
 - **Coordinate Fine-tuning**: Adjust click coordinates with real-time marker preview
 - **Case Evaluation**: Rate cases on Correctness, Difficulty, Knowledge Richness, and Task Value
+- **Knowledge Points**: Tag OSWorld overlap, custom nodes, and related apps
 - **Pass/Fail Marking**: Mark cases as Pass, Fail, or Unclear with justification
 - **Progress Tracking**: Visual progress bar showing annotation status
 - **Export**: Export passed cases with screenshots and JSON metadata
@@ -76,10 +77,10 @@ data/
 Create a CSV file with task assignments:
 
 ```csv
-task_id,instruction,worker_id,worker_name
-1,Search for weather in New York,001,Alice
-2,Open calculator and compute 25*4,002,Bob
-3,Send an email to test@example.com,001,Alice
+task_id,instruction,worker_id,worker_name,osworld_overlap,custom_nodes,related_apps
+1,Search for weather in New York,001,Alice,weather_search,search_node,Browser;Weather App
+2,Open calculator and compute 25*4,002,Bob,,calculator_node,Calculator
+3,Send an email to test@example.com,001,Alice,email_task,compose_email,Email Client
 ```
 
 | Column | Required | Description |
@@ -88,6 +89,9 @@ task_id,instruction,worker_id,worker_name
 | `instruction` | Yes | Task instruction/description |
 | `worker_id` | No | Worker identifier |
 | `worker_name` | No | Worker name for display |
+| `osworld_overlap` | No | Comma-separated tags for OSWorld overlap |
+| `custom_nodes` | No | Comma-separated custom node tags |
+| `related_apps` | No | Semicolon or comma-separated related applications |
 
 ---
 
@@ -140,25 +144,30 @@ python app.py \
 
 ## Export Format
 
-Exported JSON for each passed case includes annotator evaluation:
+Exported JSON for each passed case:
 
 ```json
 {
   "task_id": 1,
   "instruction": "Search for weather in New York",
-  "pass_reason": "Step-by-step aligns with screenshots; actions valid; final state verified.",
-  "scores": {
-    "correctness": 5,
-    "difficulty": 3,
-    "knowledge_richness": 4,
-    "task_value": 4
+  "step_by_step_instructions": "1. Open browser\n2. Navigate to weather.com\n3. Search for New York",
+  "knowledge_points": {
+    "osworld_overlap": ["weather_search"],
+    "custom_nodes": ["search_node"]
   },
+  "related_apps": ["Browser", "Weather App"],
   "traj": [
     {
       "index": 0,
+      "action_type": "click",
       "code": "pyautogui.click(500, 300)",
-      "screenshot": "task_1/step_0.png",
-      "justification": "Click on search box"
+      "screenshot": "step_0.png"
+    },
+    {
+      "index": 1,
+      "action_type": "type",
+      "code": "pyautogui.typewrite(\"New York\")",
+      "screenshot": "step_1.png"
     }
   ]
 }
