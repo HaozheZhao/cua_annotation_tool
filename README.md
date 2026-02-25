@@ -16,7 +16,7 @@ A web-based human verification system for CUA-SFT (Computer Use Agent - Supervis
 ## Installation
 
 ```bash
-pip install flask opencv-python
+pip install flask opencv-python oss2
 ```
 
 ## Quick Start
@@ -108,6 +108,7 @@ python app.py [OPTIONS]
 | `--data` | `./data` | Path to data folder containing task subfolders |
 | `--csv` | `./task_assignments.csv` | Path to CSV file with task assignments |
 | `--output` | `./output` | Path where exports will be saved |
+| `--oss-cache` | `./oss_cache` | Directory for cached OSS recordings |
 | `--port` | `5000` | Server port number |
 | `--host` | `0.0.0.0` | Server host |
 
@@ -189,6 +190,45 @@ output/
     ├── step_1.png
     └── ...
 ```
+
+---
+
+## OSS Dashboard (Real-Time Viewing)
+
+The tool includes an OSS Dashboard for reviewing recordings uploaded from AgentNet-Tool in real-time.
+
+### Setup
+
+Set environment variables for OSS access:
+
+```bash
+export OSS_ACCESS_KEY_ID=your_key_id
+export OSS_ACCESS_KEY_SECRET=your_key_secret
+export OSS_BUCKET_NAME=your_bucket_name
+export OSS_ENDPOINT=oss-cn-shanghai.aliyuncs.com
+```
+
+### Usage
+
+1. Start the server and navigate to `/dashboard`
+2. Enter the OSS upload folder name (e.g., `recordings_new`)
+3. Click **Load** to fetch recordings from OSS
+4. View per-annotator summary cards with review status counts
+5. Click an annotator card to expand their task list
+6. Click **View** to review individual recordings
+7. Mark recordings as **Reviewed**, **Rejected**, or clear the status
+
+### OSS Dashboard Routes
+
+| Route | Description |
+|-------|-------------|
+| `/dashboard` | Dashboard page with annotator overview |
+| `/oss_review/<folder_name>` | Review page for a single OSS recording |
+| `/api/oss/list?folder=X` | List recordings from OSS folder |
+| `/api/oss/dashboard_data?folder=X` | Aggregated per-annotator statistics |
+| `/api/oss/task/<folder>?folder=X` | Load recording data for review |
+| `/oss_frame/<folder>/<time>?folder=X` | Extract video frame |
+| `POST /api/oss/review` | Save review status |
 
 ---
 

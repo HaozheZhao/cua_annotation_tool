@@ -22,6 +22,12 @@ venv/
 .DS_Store
 Thumbs.db
 
+# OSS cache
+oss_cache/
+
+# Review status
+review_status.json
+
 # Annotation state (optional - uncomment to exclude)
 # annotations.json
 # coordinate_adjustments.json

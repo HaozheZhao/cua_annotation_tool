@@ -11,7 +11,7 @@ import shutil
 import zipfile
 from pathlib import Path
 from datetime import datetime
-from flask import Flask, render_template_string, send_from_directory, jsonify, request
+from flask import Flask, render_template_string, send_from_directory, jsonify, request, Response
 
 app = Flask(__name__)
 
@@ -20,6 +20,8 @@ DATA_DIR = Path(os.environ.get('CUA_DATA_DIR', './data'))
 CSV_FILE = Path(os.environ.get('CUA_CSV_FILE', './task_assignments.csv'))
 OUTPUT_DIR = Path(os.environ.get('CUA_OUTPUT_DIR', './output'))
 ANNOTATIONS_FILE = Path(os.environ.get('CUA_ANNOTATIONS_FILE', './annotations.json'))
+OSS_CACHE_DIR = Path(os.environ.get('CUA_OSS_CACHE', './oss_cache'))
+REVIEW_STATUS_FILE = Path(os.environ.get('CUA_REVIEW_STATUS', './review_status.json'))
 
 def parse_list_field(value):
     """Parse a comma-separated or JSON list field."""
@@ -229,6 +231,134 @@ def build_pyautogui_code(action, event, description):
             return f"pyautogui.hotkey({match.group(1)})"
         return "pyautogui.press('...')"
     return f"# {action}"
+
+# ============================================================================
+# OSS Review Status Persistence
+# ============================================================================
+
+def load_review_status():
+    """Load review status from JSON file."""
+    if REVIEW_STATUS_FILE.exists():
+        with open(REVIEW_STATUS_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_review_status(status):
+    """Save review status to JSON file."""
+    REVIEW_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(REVIEW_STATUS_FILE, 'w') as f:
+        json.dump(status, f, indent=2)
+
+def load_oss_task_data(local_dir):
+    """Load task data from locally cached OSS recording files.
+    Similar to load_task_data but reads from an arbitrary directory."""
+    local_dir = Path(local_dir)
+    if not local_dir.exists():
+        return None
+
+    # Load metadata
+    metadata_file = local_dir / 'metadata.json'
+    metadata = {}
+    if metadata_file.exists():
+        with open(metadata_file) as f:
+            metadata = json.load(f)
+
+    video_start_ts = metadata.get('video_start_timestamp', 0)
+
+    # Find video file and get resolution
+    video_file = None
+    video_path = None
+    video_width = 1920
+    video_height = 1080
+    for f in local_dir.glob('*.mp4'):
+        if 'video_clips' not in str(f):
+            video_file = f.name
+            video_path = f
+            break
+
+    if video_path:
+        import cv2
+        cap = cv2.VideoCapture(str(video_path))
+        video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
+        video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
+        cap.release()
+
+    # Load events
+    complete_file = local_dir / 'reduced_events_complete.jsonl'
+    if not complete_file.exists():
+        return None
+
+    vis_file = local_dir / 'reduced_events_vis.jsonl'
+    vis_events = []
+    if vis_file.exists():
+        with open(vis_file) as f:
+            vis_events = [json.loads(line) for line in f if line.strip()]
+
+    complete_events = []
+    with open(complete_file) as f:
+        complete_events = [json.loads(line) for line in f if line.strip()]
+
+    steps = []
+    for i, ce in enumerate(complete_events):
+        ve = vis_events[i] if i < len(vis_events) else {}
+        coord = ce.get('coordinate', {})
+        x, y = coord.get('x', 0), coord.get('y', 0)
+
+        start_time = ce.get('start_time', 0)
+        pre_move = ce.get('pre_move', {})
+
+        if pre_move and pre_move.get('start_time') and pre_move.get('end_time'):
+            pm_start = pre_move['start_time']
+            pm_end = pre_move['end_time']
+            pm_duration = pm_end - pm_start
+            capture_time = pm_start + (pm_duration * 0.8)
+        elif pre_move and pre_move.get('end_time'):
+            capture_time = max(0, pre_move['end_time'] - 0.3)
+        else:
+            capture_time = max(0, start_time - 0.1)
+
+        video_time = capture_time - video_start_ts
+
+        action = ce.get('action', '')
+        description = ve.get('description', ce.get('description', ''))
+        code = build_pyautogui_code(action, ce, description)
+        has_coordinate = action in ('click', 'drag') and (x != 0 or y != 0)
+
+        steps.append({
+            'index': i,
+            'action': action,
+            'description': description,
+            'justification': ce.get('justification', ''),
+            'code': code,
+            'coordinate': {'x': x, 'y': y},
+            'has_coordinate': has_coordinate,
+            'video_time': video_time
+        })
+
+    # Load annotator info
+    annotator_info = {}
+    ai_file = local_dir / 'annotator_info.json'
+    if ai_file.exists():
+        with open(ai_file) as f:
+            annotator_info = json.load(f)
+
+    # Load task name
+    task_name = ""
+    tn_file = local_dir / 'task_name.json'
+    if tn_file.exists():
+        with open(tn_file) as f:
+            tn_data = json.load(f)
+            task_name = tn_data.get('task_name', '')
+
+    return {
+        'video_file': video_file,
+        'video_start_ts': video_start_ts,
+        'video_width': video_width,
+        'video_height': video_height,
+        'steps': steps,
+        'annotator_info': annotator_info,
+        'task_name': task_name,
+    }
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
@@ -1784,8 +1914,6 @@ def serve_frame(task_id, video_time):
         return 'Frame extraction failed', 500
 
     _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-
-    from flask import Response
     return Response(buffer.tobytes(), mimetype='image/jpeg')
 
 @app.route('/api/export', methods=['POST'])
@@ -1928,12 +2056,950 @@ def api_download():
         return send_from_directory(OUTPUT_DIR, 'export.zip', as_attachment=True)
     return 'Export not found', 404
 
+# ============================================================================
+# Dashboard HTML Template
+# ============================================================================
+
+DASHBOARD_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CUA Dashboard - OSS Recordings</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f1a;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            padding: 16px 24px;
+            border-bottom: 2px solid #00d9ff;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .header h1 { font-size: 1.4em; color: #00d9ff; }
+        .header-controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .header-controls input {
+            padding: 8px 12px;
+            border: 1px solid #444;
+            border-radius: 6px;
+            background: #0f0f1a;
+            color: #e0e0e0;
+            font-size: 0.9em;
+            width: 250px;
+        }
+        .header-controls button {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        .btn-load { background: #00d9ff; color: #000; }
+        .btn-load:hover { background: #33e5ff; }
+        .btn-load:disabled { background: #555; color: #888; cursor: not-allowed; }
+        .auto-poll-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #888;
+            font-size: 0.85em;
+        }
+        .nav-link {
+            color: #00d9ff;
+            text-decoration: none;
+            font-size: 0.9em;
+        }
+        .nav-link:hover { text-decoration: underline; }
+        .status-bar {
+            padding: 10px 24px;
+            background: #16213e;
+            border-bottom: 1px solid #333;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            font-size: 0.85em;
+        }
+        .status-bar .stat { color: #888; }
+        .status-bar .stat b { color: #00d9ff; }
+        .container { padding: 20px 24px; }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #888;
+            font-size: 1.1em;
+        }
+        .annotator-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+            gap: 16px;
+            margin-top: 16px;
+        }
+        .annotator-card {
+            background: #1a1a2e;
+            border-radius: 8px;
+            border: 1px solid #333;
+            overflow: hidden;
+            transition: border-color 0.2s;
+        }
+        .annotator-card:hover { border-color: #00d9ff; }
+        .annotator-header {
+            padding: 14px 16px;
+            background: linear-gradient(135deg, #1e3a5f 0%, #16213e 100%);
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .annotator-header h3 {
+            color: #00d9ff;
+            font-size: 1em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .annotator-stats {
+            display: flex;
+            gap: 12px;
+            font-size: 0.8em;
+        }
+        .stat-badge {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .stat-badge.total { background: #333; color: #ccc; }
+        .stat-badge.reviewed { background: #2e7d32; color: #fff; }
+        .stat-badge.rejected { background: #c62828; color: #fff; }
+        .stat-badge.unreviewed { background: #555; color: #fff; }
+        .task-list {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+        .task-list.expanded { max-height: 2000px; }
+        .task-entry {
+            padding: 10px 16px;
+            border-top: 1px solid #252542;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.85em;
+        }
+        .task-entry:hover { background: #252542; }
+        .task-entry .task-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            flex: 1;
+            min-width: 0;
+        }
+        .task-entry .task-id { color: #00d9ff; font-weight: 600; }
+        .task-entry .task-query {
+            color: #888;
+            font-size: 0.85em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .task-entry .task-date { color: #666; font-size: 0.8em; }
+        .task-entry .task-actions { display: flex; gap: 8px; align-items: center; }
+        .review-badge {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+        .review-badge.reviewed { background: #2e7d32; color: #fff; }
+        .review-badge.rejected { background: #c62828; color: #fff; }
+        .review-badge.unreviewed { background: #444; color: #999; }
+        .btn-view {
+            padding: 4px 12px;
+            border: 1px solid #00d9ff;
+            border-radius: 4px;
+            background: transparent;
+            color: #00d9ff;
+            cursor: pointer;
+            font-size: 0.85em;
+            text-decoration: none;
+        }
+        .btn-view:hover { background: #00d9ff; color: #000; }
+        .expand-icon {
+            transition: transform 0.3s;
+            font-size: 0.8em;
+        }
+        .expand-icon.expanded { transform: rotate(90deg); }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+        .empty-state h2 { color: #444; margin-bottom: 12px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>OSS Recording Dashboard</h1>
+        <div class="header-controls">
+            <a href="/" class="nav-link">&#8592; Local Review</a>
+            <input type="text" id="ossFolder" value="recordings_new" placeholder="OSS upload folder" />
+            <button class="btn-load" id="loadBtn" onclick="loadDashboard()">Load</button>
+            <label class="auto-poll-label">
+                <input type="checkbox" id="autoPoll" /> Auto-refresh (60s)
+            </label>
+        </div>
+    </div>
+    <div class="status-bar" id="statusBar" style="display:none;">
+        <span class="stat">Total recordings: <b id="totalCount">0</b></span>
+        <span class="stat">Annotators: <b id="annotatorCount">0</b></span>
+        <span class="stat">Reviewed: <b id="reviewedCount">0</b></span>
+        <span class="stat">Rejected: <b id="rejectedCount">0</b></span>
+        <span class="stat">Unreviewed: <b id="unreviewedCount">0</b></span>
+        <span class="stat" style="margin-left:auto;">Last updated: <b id="lastUpdated">-</b></span>
+    </div>
+    <div class="container" id="content">
+        <div class="empty-state">
+            <h2>No data loaded</h2>
+            <p>Enter an OSS upload folder name above and click Load.</p>
+        </div>
+    </div>
+
+    <script>
+        let pollInterval = null;
+        let dashboardData = null;
+
+        async function loadDashboard() {
+            const folder = document.getElementById('ossFolder').value.trim();
+            if (!folder) return;
+
+            const loadBtn = document.getElementById('loadBtn');
+            loadBtn.disabled = true;
+            loadBtn.textContent = 'Loading...';
+
+            try {
+                const resp = await fetch('/api/oss/dashboard_data?folder=' + encodeURIComponent(folder));
+                const data = await resp.json();
+
+                if (data.error) {
+                    document.getElementById('content').innerHTML =
+                        '<div class="empty-state"><h2>Error</h2><p>' + data.error + '</p></div>';
+                    return;
+                }
+
+                dashboardData = data;
+                renderDashboard(data);
+
+                document.getElementById('statusBar').style.display = 'flex';
+                document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+
+            } catch (err) {
+                document.getElementById('content').innerHTML =
+                    '<div class="empty-state"><h2>Error</h2><p>' + err.message + '</p></div>';
+            } finally {
+                loadBtn.disabled = false;
+                loadBtn.textContent = 'Load';
+            }
+        }
+
+        function renderDashboard(data) {
+            const annotators = data.annotators || {};
+            const keys = Object.keys(annotators).sort();
+
+            let totalAll = 0, reviewedAll = 0, rejectedAll = 0, unreviewedAll = 0;
+            keys.forEach(k => {
+                const a = annotators[k];
+                totalAll += a.total;
+                reviewedAll += a.reviewed;
+                rejectedAll += a.rejected;
+                unreviewedAll += a.unreviewed;
+            });
+
+            document.getElementById('totalCount').textContent = totalAll;
+            document.getElementById('annotatorCount').textContent = keys.length;
+            document.getElementById('reviewedCount').textContent = reviewedAll;
+            document.getElementById('rejectedCount').textContent = rejectedAll;
+            document.getElementById('unreviewedCount').textContent = unreviewedAll;
+
+            if (keys.length === 0) {
+                document.getElementById('content').innerHTML =
+                    '<div class="empty-state"><h2>No recordings found</h2><p>Check the OSS folder name.</p></div>';
+                return;
+            }
+
+            let html = '<div class="annotator-grid">';
+            keys.forEach(username => {
+                const a = annotators[username];
+                html += renderAnnotatorCard(username, a);
+            });
+            html += '</div>';
+
+            document.getElementById('content').innerHTML = html;
+        }
+
+        function renderAnnotatorCard(username, data) {
+            const folder = document.getElementById('ossFolder').value.trim();
+            let tasksHtml = '';
+            (data.recordings || []).forEach(rec => {
+                const statusClass = rec.review_status || 'unreviewed';
+                const statusLabel = statusClass.charAt(0).toUpperCase() + statusClass.slice(1);
+                const query = rec.query || rec.task_id || '-';
+                const date = rec.upload_timestamp ? rec.upload_timestamp.split('T')[0] : '-';
+                tasksHtml += `
+                    <div class="task-entry">
+                        <div class="task-info">
+                            <span class="task-id">${rec.task_id || rec.folder_name}</span>
+                            <span class="task-query" title="${query}">${query}</span>
+                            <span class="task-date">${date}</span>
+                        </div>
+                        <div class="task-actions">
+                            <span class="review-badge ${statusClass}">${statusLabel}</span>
+                            <a class="btn-view" href="/oss_review/${encodeURIComponent(rec.folder_name)}?folder=${encodeURIComponent(folder)}">View</a>
+                        </div>
+                    </div>`;
+            });
+
+            return `
+                <div class="annotator-card">
+                    <div class="annotator-header" onclick="toggleTaskList('${username}')">
+                        <h3>
+                            <span class="expand-icon" id="icon-${username}">&#9654;</span>
+                            ${username}
+                        </h3>
+                        <div class="annotator-stats">
+                            <span class="stat-badge total">${data.total}</span>
+                            <span class="stat-badge reviewed">${data.reviewed}</span>
+                            <span class="stat-badge rejected">${data.rejected}</span>
+                            <span class="stat-badge unreviewed">${data.unreviewed}</span>
+                        </div>
+                    </div>
+                    <div class="task-list" id="tasks-${username}">
+                        ${tasksHtml}
+                    </div>
+                </div>`;
+        }
+
+        function toggleTaskList(username) {
+            const el = document.getElementById('tasks-' + username);
+            const icon = document.getElementById('icon-' + username);
+            el.classList.toggle('expanded');
+            icon.classList.toggle('expanded');
+        }
+
+        // Auto-poll
+        document.getElementById('autoPoll').addEventListener('change', function() {
+            if (this.checked) {
+                pollInterval = setInterval(loadDashboard, 60000);
+            } else {
+                if (pollInterval) clearInterval(pollInterval);
+                pollInterval = null;
+            }
+        });
+
+        // Load on Enter key
+        document.getElementById('ossFolder').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') loadDashboard();
+        });
+    </script>
+</body>
+</html>
+'''
+
+# ============================================================================
+# OSS Review HTML Template
+# ============================================================================
+
+OSS_REVIEW_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OSS Review - {{ folder_name }}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f1a;
+            color: #e0e0e0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #00d9ff;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .header h1 { font-size: 1.2em; color: #00d9ff; }
+        .header-info { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+        .header-info span { color: #888; font-size: 0.85em; }
+        .header-info b { color: #e0e0e0; }
+        .btn-back {
+            padding: 6px 16px;
+            border: 1px solid #00d9ff;
+            border-radius: 4px;
+            background: transparent;
+            color: #00d9ff;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 0.9em;
+        }
+        .btn-back:hover { background: #00d9ff; color: #000; }
+        .main-content {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+        .step-sidebar {
+            width: 220px;
+            background: #16213e;
+            overflow-y: auto;
+            padding: 10px;
+            border-right: 1px solid #333;
+        }
+        .step-item {
+            padding: 8px 10px;
+            margin: 3px 0;
+            background: #1a1a2e;
+            border-radius: 6px;
+            cursor: pointer;
+            border-left: 4px solid transparent;
+            transition: all 0.2s;
+            font-size: 0.85em;
+        }
+        .step-item:hover { background: #252542; }
+        .step-item.active { border-left-color: #00d9ff; background: #252542; }
+        .step-item .step-num { color: #00d9ff; font-weight: bold; }
+        .step-item .step-action { color: #888; font-size: 0.85em; }
+        .content-area {
+            flex: 1;
+            padding: 15px 20px;
+            overflow-y: auto;
+        }
+        .annotator-info-bar {
+            background: linear-gradient(135deg, #1e3a5f 0%, #16213e 100%);
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border-left: 4px solid #ffc107;
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
+            font-size: 0.9em;
+        }
+        .annotator-info-bar .info-item span { color: #888; }
+        .annotator-info-bar .info-item b { color: #ffc107; }
+        .screenshot-container {
+            position: relative;
+            display: inline-block;
+            margin-bottom: 12px;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            max-width: 100%;
+        }
+        .screenshot-container img {
+            max-width: 100%;
+            max-height: 65vh;
+            display: block;
+        }
+        .coord-marker {
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            border: 3px solid #ff3333;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            box-shadow: 0 0 10px rgba(255, 51, 51, 0.5);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 10px rgba(255, 51, 51, 0.5); }
+            50% { box-shadow: 0 0 20px rgba(255, 51, 51, 0.8); }
+        }
+        .step-details {
+            background: #1a1a2e;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border: 1px solid #333;
+        }
+        .step-details h4 { color: #00d9ff; margin-bottom: 8px; font-size: 0.95em; }
+        .step-details .code {
+            background: #0d1117;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: #4caf50;
+            margin-bottom: 8px;
+        }
+        .step-details .description { color: #ccc; line-height: 1.5; }
+        .step-details .justification {
+            color: #888;
+            font-style: italic;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #333;
+        }
+        .review-panel {
+            background: #1a1a2e;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            margin-bottom: 12px;
+        }
+        .review-panel h4 { color: #ffc107; margin-bottom: 12px; }
+        .review-buttons {
+            display: flex;
+            gap: 10px;
+        }
+        .review-btn {
+            padding: 10px 30px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+            font-size: 1em;
+        }
+        .review-btn.reviewed { background: #2e7d32; color: #fff; }
+        .review-btn.reviewed:hover { background: #4caf50; }
+        .review-btn.reviewed.active { background: #4caf50; box-shadow: 0 0 10px #4caf50; }
+        .review-btn.rejected { background: #c62828; color: #fff; }
+        .review-btn.rejected:hover { background: #f44336; }
+        .review-btn.rejected.active { background: #f44336; box-shadow: 0 0 10px #f44336; }
+        .review-btn.unreviewed { background: #555; color: #fff; }
+        .review-btn.unreviewed:hover { background: #777; }
+        .review-btn.unreviewed.active { background: #777; box-shadow: 0 0 10px #777; }
+        .nav-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        .nav-btn {
+            padding: 8px 20px;
+            border: 1px solid #444;
+            border-radius: 6px;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .nav-btn:hover { border-color: #00d9ff; color: #00d9ff; }
+        .nav-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .step-counter {
+            color: #888;
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+        }
+        .loading-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15, 15, 26, 0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            font-size: 1.2em;
+            color: #00d9ff;
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-overlay" id="loadingOverlay">Loading recording data...</div>
+
+    <div class="header">
+        <h1>OSS Review</h1>
+        <div class="header-info">
+            <span>Folder: <b id="folderName"></b></span>
+            <span>Task: <b id="taskName"></b></span>
+            <span>Status: <b id="reviewStatus">-</b></span>
+        </div>
+        <a class="btn-back" id="backLink" href="/dashboard">&#8592; Dashboard</a>
+    </div>
+
+    <div class="main-content">
+        <div class="step-sidebar" id="stepSidebar"></div>
+        <div class="content-area" id="contentArea">
+            <div class="annotator-info-bar" id="annotatorInfo"></div>
+            <div class="nav-buttons">
+                <button class="nav-btn" id="prevBtn" onclick="prevStep()">&#9664; Prev</button>
+                <span class="step-counter" id="stepCounter">Step 0 / 0</span>
+                <button class="nav-btn" id="nextBtn" onclick="nextStep()">Next &#9654;</button>
+            </div>
+            <div class="screenshot-container" id="screenshotContainer">
+                <img id="screenshot" src="" alt="Screenshot" />
+                <div class="coord-marker" id="coordMarker" style="display:none;"></div>
+            </div>
+            <div class="step-details" id="stepDetails"></div>
+            <div class="review-panel">
+                <h4>Review Decision</h4>
+                <div class="review-buttons">
+                    <button class="review-btn reviewed" id="btnReviewed" onclick="setReview('reviewed')">Reviewed (Pass)</button>
+                    <button class="review-btn rejected" id="btnRejected" onclick="setReview('rejected')">Rejected</button>
+                    <button class="review-btn unreviewed" id="btnUnreviewed" onclick="setReview('unreviewed')">Clear</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const folderName = '{{ folder_name }}';
+        const ossFolder = new URLSearchParams(window.location.search).get('folder') || 'recordings_new';
+        let taskData = null;
+        let currentStep = 0;
+        let reviewStatus = 'unreviewed';
+
+        document.getElementById('backLink').href = '/dashboard';
+        document.getElementById('folderName').textContent = folderName;
+
+        async function loadTask() {
+            try {
+                const resp = await fetch('/api/oss/task/' + encodeURIComponent(folderName) + '?folder=' + encodeURIComponent(ossFolder));
+                taskData = await resp.json();
+
+                if (taskData.error) {
+                    document.getElementById('contentArea').innerHTML =
+                        '<div style="padding:40px;color:#f44336;">' + taskData.error + '</div>';
+                    document.getElementById('loadingOverlay').style.display = 'none';
+                    return;
+                }
+
+                // Set task name
+                document.getElementById('taskName').textContent = taskData.task_name || folderName;
+
+                // Render annotator info
+                const info = taskData.annotator_info || {};
+                let infoHtml = '';
+                if (info.username) infoHtml += '<div class="info-item"><span>Annotator:</span> <b>' + info.username + '</b></div>';
+                if (info.task_id) infoHtml += '<div class="info-item"><span>Task ID:</span> <b>' + info.task_id + '</b></div>';
+                if (info.query) infoHtml += '<div class="info-item"><span>Query:</span> <b>' + info.query + '</b></div>';
+                if (info.upload_timestamp) infoHtml += '<div class="info-item"><span>Uploaded:</span> <b>' + info.upload_timestamp + '</b></div>';
+                document.getElementById('annotatorInfo').innerHTML = infoHtml || '<div class="info-item"><span>No annotator info available</span></div>';
+
+                // Set review status
+                reviewStatus = taskData.review_status || 'unreviewed';
+                updateReviewUI();
+
+                // Render step sidebar
+                renderStepSidebar();
+                renderStep(0);
+
+                document.getElementById('loadingOverlay').style.display = 'none';
+            } catch (err) {
+                document.getElementById('contentArea').innerHTML =
+                    '<div style="padding:40px;color:#f44336;">Failed to load: ' + err.message + '</div>';
+                document.getElementById('loadingOverlay').style.display = 'none';
+            }
+        }
+
+        function renderStepSidebar() {
+            const steps = taskData.steps || [];
+            let html = '';
+            steps.forEach((step, i) => {
+                html += '<div class="step-item' + (i === 0 ? ' active' : '') + '" onclick="selectStep(' + i + ')" id="step-' + i + '">' +
+                    '<span class="step-num">Step ' + i + '</span> ' +
+                    '<span class="step-action">' + (step.action || '') + '</span>' +
+                    '</div>';
+            });
+            document.getElementById('stepSidebar').innerHTML = html;
+        }
+
+        function selectStep(idx) {
+            currentStep = idx;
+            renderStep(idx);
+            // Update sidebar active state
+            document.querySelectorAll('.step-item').forEach((el, i) => {
+                el.classList.toggle('active', i === idx);
+            });
+        }
+
+        function renderStep(idx) {
+            const steps = taskData.steps || [];
+            if (idx < 0 || idx >= steps.length) return;
+
+            const step = steps[idx];
+            currentStep = idx;
+
+            // Update counter
+            document.getElementById('stepCounter').textContent = 'Step ' + idx + ' / ' + (steps.length - 1);
+            document.getElementById('prevBtn').disabled = idx <= 0;
+            document.getElementById('nextBtn').disabled = idx >= steps.length - 1;
+
+            // Load screenshot
+            const img = document.getElementById('screenshot');
+            img.src = '/oss_frame/' + encodeURIComponent(folderName) + '/' + step.video_time + '?folder=' + encodeURIComponent(ossFolder);
+
+            // Update coordinate marker
+            const marker = document.getElementById('coordMarker');
+            if (step.has_coordinate && step.coordinate) {
+                img.onload = function() {
+                    const scaleX = img.clientWidth / taskData.video_width;
+                    const scaleY = img.clientHeight / taskData.video_height;
+                    marker.style.left = (step.coordinate.x * scaleX) + 'px';
+                    marker.style.top = (step.coordinate.y * scaleY) + 'px';
+                    marker.style.display = 'block';
+                };
+            } else {
+                marker.style.display = 'none';
+            }
+
+            // Update step details
+            let detailsHtml = '<h4>Step ' + idx + ': ' + (step.action || '') + '</h4>';
+            detailsHtml += '<div class="code">' + (step.code || '') + '</div>';
+            if (step.description) {
+                detailsHtml += '<div class="description">' + step.description + '</div>';
+            }
+            if (step.justification) {
+                detailsHtml += '<div class="justification">Justification: ' + step.justification + '</div>';
+            }
+            document.getElementById('stepDetails').innerHTML = detailsHtml;
+        }
+
+        function prevStep() { if (currentStep > 0) selectStep(currentStep - 1); }
+        function nextStep() { if (taskData && currentStep < taskData.steps.length - 1) selectStep(currentStep + 1); }
+
+        function updateReviewUI() {
+            document.getElementById('reviewStatus').textContent = reviewStatus;
+            document.getElementById('reviewStatus').style.color =
+                reviewStatus === 'reviewed' ? '#4caf50' :
+                reviewStatus === 'rejected' ? '#f44336' : '#888';
+            ['reviewed', 'rejected', 'unreviewed'].forEach(s => {
+                document.getElementById('btn' + s.charAt(0).toUpperCase() + s.slice(1)).classList.toggle('active', reviewStatus === s);
+            });
+        }
+
+        async function setReview(status) {
+            reviewStatus = status;
+            updateReviewUI();
+            try {
+                await fetch('/api/oss/review', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        folder_name: folderName,
+                        oss_folder: ossFolder,
+                        status: status
+                    })
+                });
+            } catch (err) {
+                console.error('Failed to save review:', err);
+            }
+        }
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'ArrowLeft') prevStep();
+            if (e.key === 'ArrowRight') nextStep();
+        });
+
+        loadTask();
+    </script>
+</body>
+</html>
+'''
+
+# ============================================================================
+# OSS Routes
+# ============================================================================
+
+@app.route('/dashboard')
+def dashboard():
+    """Dashboard page for OSS recordings overview."""
+    return render_template_string(DASHBOARD_TEMPLATE)
+
+@app.route('/api/oss/list')
+def api_oss_list():
+    """List recordings from an OSS folder."""
+    folder = request.args.get('folder', 'recordings_new')
+    try:
+        import oss_client
+        recordings = oss_client.list_recordings(folder)
+        return jsonify({'recordings': recordings, 'folder': folder})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/oss/dashboard_data')
+def api_oss_dashboard_data():
+    """Aggregated per-annotator statistics for the dashboard."""
+    folder = request.args.get('folder', 'recordings_new')
+    try:
+        import oss_client
+
+        recordings = oss_client.list_recordings(folder)
+        review_statuses = load_review_status()
+
+        annotators = {}
+
+        for rec_name in recordings:
+            # Try to get metadata from OSS
+            prefix = folder.rstrip('/') + '/' + rec_name
+            metadata = oss_client.get_recording_metadata(prefix)
+
+            if metadata is None:
+                # Infer metadata from folder name
+                metadata = oss_client.parse_folder_name_metadata(rec_name)
+
+            username = metadata.get('username', 'Unknown')
+            task_id = metadata.get('task_id', '')
+            query = metadata.get('query', '')
+            upload_ts = metadata.get('upload_timestamp', '')
+
+            # Get review status for this recording
+            review_key = f"{folder}/{rec_name}"
+            rec_review_status = review_statuses.get(review_key, 'unreviewed')
+
+            if username not in annotators:
+                annotators[username] = {
+                    'total': 0,
+                    'reviewed': 0,
+                    'rejected': 0,
+                    'unreviewed': 0,
+                    'recordings': []
+                }
+
+            annotators[username]['total'] += 1
+            annotators[username][rec_review_status] += 1
+            annotators[username]['recordings'].append({
+                'folder_name': rec_name,
+                'task_id': task_id,
+                'query': query,
+                'upload_timestamp': upload_ts,
+                'review_status': rec_review_status,
+            })
+
+        return jsonify({'annotators': annotators, 'folder': folder})
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/oss/task/<path:folder_name>')
+def api_oss_task(folder_name):
+    """Load recording data for review from OSS."""
+    oss_folder = request.args.get('folder', 'recordings_new')
+    try:
+        import oss_client
+
+        prefix = oss_folder.rstrip('/') + '/' + folder_name
+
+        # Create local cache directory
+        local_dir = OSS_CACHE_DIR / folder_name
+        local_dir.mkdir(parents=True, exist_ok=True)
+
+        # Download metadata files
+        oss_client.download_recording_metadata_files(prefix, str(local_dir))
+
+        # Download video (lazy - skip if already cached)
+        oss_client.download_video(prefix, str(local_dir))
+
+        # Load task data from cached files
+        data = load_oss_task_data(local_dir)
+        if not data:
+            return jsonify({'error': 'Could not load recording data. Missing required files.'}), 404
+
+        # Get review status
+        review_statuses = load_review_status()
+        review_key = f"{oss_folder}/{folder_name}"
+        data['review_status'] = review_statuses.get(review_key, 'unreviewed')
+        data['folder_name'] = folder_name
+
+        return jsonify(data)
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/oss_frame/<path:folder_name>/<float:video_time>')
+def oss_serve_frame(folder_name, video_time):
+    """Extract and serve a frame from a cached OSS recording video."""
+    import cv2
+
+    local_dir = OSS_CACHE_DIR / folder_name
+    video_file = None
+    for f in local_dir.glob('*.mp4'):
+        if 'video_clips' not in str(f):
+            video_file = f
+            break
+
+    if not video_file:
+        # Try to download the video first
+        oss_folder = request.args.get('folder', 'recordings_new')
+        try:
+            import oss_client
+            prefix = oss_folder.rstrip('/') + '/' + folder_name
+            video_path = oss_client.download_video(prefix, str(local_dir))
+            if video_path:
+                video_file = Path(video_path)
+        except Exception:
+            pass
+
+    if not video_file or not video_file.exists():
+        return 'Video not found', 404
+
+    cap = cv2.VideoCapture(str(video_file))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    frame_num = int(video_time * fps)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    frame_num = max(0, min(frame_num, total_frames - 1))
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+    ret, frame = cap.read()
+    cap.release()
+
+    if not ret:
+        return 'Frame extraction failed', 500
+
+    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return Response(buffer.tobytes(), mimetype='image/jpeg')
+
+@app.route('/api/oss/review', methods=['POST'])
+def api_oss_review():
+    """Save review status for a recording."""
+    data = request.json
+    folder_name = data.get('folder_name', '')
+    oss_folder = data.get('oss_folder', 'recordings_new')
+    status = data.get('status', 'unreviewed')
+
+    if status not in ('reviewed', 'rejected', 'unreviewed'):
+        return jsonify({'error': 'Invalid status'}), 400
+
+    review_statuses = load_review_status()
+    review_key = f"{oss_folder}/{folder_name}"
+    review_statuses[review_key] = status
+    save_review_status(review_statuses)
+
+    return jsonify({'success': True})
+
+@app.route('/oss_review/<path:folder_name>')
+def oss_review_page(folder_name):
+    """Review page for a single OSS recording."""
+    return render_template_string(OSS_REVIEW_TEMPLATE, folder_name=folder_name)
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='CUA Annotation Tool')
     parser.add_argument('--data', default='./data', help='Data directory')
     parser.add_argument('--csv', default='./task_assignments.csv', help='CSV file with task assignments')
     parser.add_argument('--output', default='./output', help='Output directory')
+    parser.add_argument('--oss-cache', default='./oss_cache', help='OSS cache directory')
     parser.add_argument('--port', type=int, default=5000, help='Port number')
     parser.add_argument('--host', default='0.0.0.0', help='Host')
     args = parser.parse_args()
@@ -1942,6 +3008,7 @@ if __name__ == '__main__':
     CSV_FILE = Path(args.csv)
     OUTPUT_DIR = Path(args.output)
     ANNOTATIONS_FILE = OUTPUT_DIR / 'annotations.json'
+    OSS_CACHE_DIR = Path(args.oss_cache)
 
     print(f"\n{'='*50}")
     print("CUA Annotation Tool")
@@ -1949,7 +3016,9 @@ if __name__ == '__main__':
     print(f"Data directory: {DATA_DIR}")
     print(f"CSV file: {CSV_FILE}")
     print(f"Output directory: {OUTPUT_DIR}")
+    print(f"OSS cache: {OSS_CACHE_DIR}")
     print(f"\nStarting server at: http://{args.host}:{args.port}")
+    print(f"Dashboard: http://{args.host}:{args.port}/dashboard")
     print("Press Ctrl+C to stop\n")
 
     app.run(host=args.host, port=args.port, debug=False)
