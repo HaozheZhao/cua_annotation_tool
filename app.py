@@ -22,6 +22,8 @@ OUTPUT_DIR = Path(os.environ.get('CUA_OUTPUT_DIR', './output'))
 ANNOTATIONS_FILE = Path(os.environ.get('CUA_ANNOTATIONS_FILE', './annotations.json'))
 OSS_CACHE_DIR = Path(os.environ.get('CUA_OSS_CACHE', './oss_cache'))
 REVIEW_STATUS_FILE = Path(os.environ.get('CUA_REVIEW_STATUS', './review_status.json'))
+OSS_ANNOTATIONS_FILE = Path(os.environ.get('CUA_OSS_ANNOTATIONS', './oss_annotations.json'))
+OSS_COORD_ADJUSTMENTS_FILE = Path(os.environ.get('CUA_OSS_COORD_ADJ', './oss_coord_adjustments.json'))
 
 def parse_list_field(value):
     """Parse a comma-separated or JSON list field."""
@@ -248,6 +250,32 @@ def save_review_status(status):
     REVIEW_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(REVIEW_STATUS_FILE, 'w') as f:
         json.dump(status, f, indent=2)
+
+def load_oss_annotations():
+    """Load OSS recording annotations."""
+    if OSS_ANNOTATIONS_FILE.exists():
+        with open(OSS_ANNOTATIONS_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_oss_annotations(annotations):
+    """Save OSS recording annotations."""
+    OSS_ANNOTATIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(OSS_ANNOTATIONS_FILE, 'w') as f:
+        json.dump(annotations, f, indent=2, ensure_ascii=False)
+
+def load_oss_coord_adjustments():
+    """Load OSS coordinate adjustments."""
+    if OSS_COORD_ADJUSTMENTS_FILE.exists():
+        with open(OSS_COORD_ADJUSTMENTS_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_oss_coord_adjustments(adjustments):
+    """Save OSS coordinate adjustments."""
+    OSS_COORD_ADJUSTMENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(OSS_COORD_ADJUSTMENTS_FILE, 'w') as f:
+        json.dump(adjustments, f, indent=2, ensure_ascii=False)
 
 def load_oss_task_data(local_dir):
     """Load task data from locally cached OSS recording files.
@@ -2069,21 +2097,30 @@ DASHBOARD_TEMPLATE = '''
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0f0f1a;
+            background: #0a0a14;
             color: #e0e0e0;
             min-height: 100vh;
         }
         .header {
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            padding: 16px 24px;
-            border-bottom: 2px solid #00d9ff;
+            background: linear-gradient(135deg, #0d1b2a 0%, #1b2838 50%, #16213e 100%);
+            padding: 20px 28px;
+            border-bottom: 3px solid transparent;
+            border-image: linear-gradient(90deg, #00d9ff, #7c4dff, #00d9ff) 1;
             display: flex;
             justify-content: space-between;
             align-items: center;
             flex-wrap: wrap;
             gap: 12px;
         }
-        .header h1 { font-size: 1.4em; color: #00d9ff; }
+        .header h1 {
+            font-size: 1.6em;
+            background: linear-gradient(135deg, #00d9ff 0%, #7c4dff 50%, #00d9ff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+        }
         .header-controls {
             display: flex;
             gap: 12px;
@@ -2091,25 +2128,45 @@ DASHBOARD_TEMPLATE = '''
             flex-wrap: wrap;
         }
         .header-controls input {
-            padding: 8px 12px;
-            border: 1px solid #444;
-            border-radius: 6px;
-            background: #0f0f1a;
+            padding: 10px 14px;
+            border: 1px solid #333;
+            border-radius: 8px;
+            background: rgba(15, 15, 26, 0.8);
             color: #e0e0e0;
             font-size: 0.9em;
-            width: 250px;
+            width: 260px;
+            transition: border-color 0.2s;
         }
+        .header-controls input:focus { border-color: #00d9ff; outline: none; }
         .header-controls button {
-            padding: 8px 20px;
+            padding: 10px 24px;
             border: none;
-            border-radius: 6px;
+            border-radius: 8px;
             cursor: pointer;
             font-weight: bold;
-            transition: all 0.2s;
+            transition: all 0.3s;
+            font-size: 0.9em;
         }
-        .btn-load { background: #00d9ff; color: #000; }
-        .btn-load:hover { background: #33e5ff; }
-        .btn-load:disabled { background: #555; color: #888; cursor: not-allowed; }
+        .btn-load {
+            background: linear-gradient(135deg, #00d9ff, #0099cc);
+            color: #000;
+            position: relative;
+            overflow: hidden;
+        }
+        .btn-load:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(0, 217, 255, 0.3); }
+        .btn-load:disabled { background: #333; color: #666; cursor: not-allowed; transform: none; box-shadow: none; }
+        .btn-load.loading::after {
+            content: '';
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 18px; height: 18px;
+            margin: -9px 0 0 -9px;
+            border: 2px solid transparent;
+            border-top-color: #000;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
         .auto-poll-label {
             display: flex;
             align-items: center;
@@ -2121,84 +2178,194 @@ DASHBOARD_TEMPLATE = '''
             color: #00d9ff;
             text-decoration: none;
             font-size: 0.9em;
+            padding: 6px 14px;
+            border: 1px solid #00d9ff33;
+            border-radius: 6px;
+            transition: all 0.2s;
         }
-        .nav-link:hover { text-decoration: underline; }
-        .status-bar {
-            padding: 10px 24px;
-            background: #16213e;
-            border-bottom: 1px solid #333;
-            display: flex;
-            gap: 20px;
-            align-items: center;
-            font-size: 0.85em;
+        .nav-link:hover { background: rgba(0,217,255,0.1); border-color: #00d9ff; }
+
+        /* Stats row */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 16px;
+            padding: 20px 28px;
+            background: #0d0d18;
         }
-        .status-bar .stat { color: #888; }
-        .status-bar .stat b { color: #00d9ff; }
-        .container { padding: 20px 24px; }
-        .loading {
-            text-align: center;
-            padding: 40px;
+        .stat-card {
+            background: linear-gradient(145deg, #151525 0%, #1a1a2e 100%);
+            border-radius: 12px;
+            padding: 18px 20px;
+            border: 1px solid #252542;
+            transition: all 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            border-radius: 12px 12px 0 0;
+        }
+        .stat-card:nth-child(1)::before { background: linear-gradient(90deg, #00d9ff, #0099cc); }
+        .stat-card:nth-child(2)::before { background: linear-gradient(90deg, #7c4dff, #536dfe); }
+        .stat-card:nth-child(3)::before { background: linear-gradient(90deg, #4caf50, #66bb6a); }
+        .stat-card:nth-child(4)::before { background: linear-gradient(90deg, #f44336, #ff5252); }
+        .stat-card:nth-child(5)::before { background: linear-gradient(90deg, #888, #aaa); }
+        .stat-card:hover { transform: translateY(-3px); box-shadow: 0 8px 25px rgba(0,0,0,0.3); border-color: #444; }
+        .stat-card .stat-icon {
+            font-size: 1.6em;
+            margin-bottom: 8px;
+        }
+        .stat-card .stat-label {
+            font-size: 0.78em;
             color: #888;
-            font-size: 1.1em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
         }
+        .stat-card .stat-value {
+            font-size: 1.8em;
+            font-weight: 800;
+        }
+        .stat-card:nth-child(1) .stat-value { color: #00d9ff; }
+        .stat-card:nth-child(2) .stat-value { color: #7c4dff; }
+        .stat-card:nth-child(3) .stat-value { color: #4caf50; }
+        .stat-card:nth-child(4) .stat-value { color: #f44336; }
+        .stat-card:nth-child(5) .stat-value { color: #999; }
+        .stat-card .stat-sub {
+            font-size: 0.75em;
+            color: #666;
+            margin-top: 4px;
+        }
+
+        .container { padding: 20px 28px; }
+
+        /* Annotator cards */
         .annotator-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-            gap: 16px;
-            margin-top: 16px;
+            grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+            gap: 18px;
+            margin-top: 8px;
         }
         .annotator-card {
-            background: #1a1a2e;
-            border-radius: 8px;
-            border: 1px solid #333;
+            background: linear-gradient(145deg, #151525 0%, #1a1a2e 100%);
+            border-radius: 12px;
+            border: 1px solid #252542;
             overflow: hidden;
-            transition: border-color 0.2s;
+            transition: all 0.3s;
+            animation: fadeIn 0.4s ease;
         }
-        .annotator-card:hover { border-color: #00d9ff; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .annotator-card:hover { border-color: #00d9ff44; transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.25); }
         .annotator-header {
-            padding: 14px 16px;
-            background: linear-gradient(135deg, #1e3a5f 0%, #16213e 100%);
+            padding: 16px 18px;
+            background: linear-gradient(135deg, rgba(30, 58, 95, 0.5) 0%, rgba(22, 33, 62, 0.5) 100%);
             cursor: pointer;
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
         .annotator-header h3 {
-            color: #00d9ff;
+            color: #e0e0e0;
             font-size: 1em;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
         }
+        .avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            font-size: 1em;
+            color: white;
+            flex-shrink: 0;
+        }
+        .annotator-meta {
+            display: flex;
+            flex-direction: column;
+        }
+        .annotator-meta .username { color: #e0e0e0; font-weight: 700; }
+        .annotator-meta .task-count { color: #888; font-size: 0.8em; font-weight: normal; }
         .annotator-stats {
             display: flex;
-            gap: 12px;
-            font-size: 0.8em;
+            gap: 8px;
+            font-size: 0.78em;
         }
         .stat-badge {
-            padding: 2px 8px;
-            border-radius: 4px;
+            padding: 3px 10px;
+            border-radius: 20px;
             font-weight: bold;
         }
-        .stat-badge.total { background: #333; color: #ccc; }
-        .stat-badge.reviewed { background: #2e7d32; color: #fff; }
-        .stat-badge.rejected { background: #c62828; color: #fff; }
-        .stat-badge.unreviewed { background: #555; color: #fff; }
+        .stat-badge.reviewed { background: rgba(76, 175, 80, 0.2); color: #4caf50; border: 1px solid rgba(76, 175, 80, 0.3); }
+        .stat-badge.rejected { background: rgba(244, 67, 54, 0.2); color: #f44336; border: 1px solid rgba(244, 67, 54, 0.3); }
+        .stat-badge.unreviewed { background: rgba(150, 150, 150, 0.15); color: #999; border: 1px solid rgba(150, 150, 150, 0.2); }
+
+        /* Progress bar in annotator card */
+        .annotator-progress {
+            padding: 0 18px 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .progress-track {
+            flex: 1;
+            height: 6px;
+            background: #252542;
+            border-radius: 3px;
+            overflow: hidden;
+            display: flex;
+        }
+        .progress-fill-reviewed {
+            height: 100%;
+            background: linear-gradient(90deg, #4caf50, #66bb6a);
+            transition: width 0.5s ease;
+        }
+        .progress-fill-rejected {
+            height: 100%;
+            background: linear-gradient(90deg, #f44336, #ff5252);
+            transition: width 0.5s ease;
+        }
+        .progress-pct {
+            font-size: 0.75em;
+            color: #888;
+            min-width: 36px;
+            text-align: right;
+        }
+
+        .expand-icon {
+            transition: transform 0.3s;
+            font-size: 0.75em;
+            color: #666;
+        }
+        .expand-icon.expanded { transform: rotate(90deg); }
+
         .task-list {
             max-height: 0;
             overflow: hidden;
-            transition: max-height 0.3s ease;
+            transition: max-height 0.4s ease;
         }
-        .task-list.expanded { max-height: 2000px; }
+        .task-list.expanded { max-height: 3000px; }
         .task-entry {
-            padding: 10px 16px;
-            border-top: 1px solid #252542;
+            padding: 10px 18px;
+            border-top: 1px solid #1e1e35;
             display: flex;
             justify-content: space-between;
             align-items: center;
             font-size: 0.85em;
+            transition: background 0.2s;
+            animation: fadeIn 0.3s ease;
         }
-        .task-entry:hover { background: #252542; }
+        .task-entry:hover { background: rgba(0, 217, 255, 0.03); }
         .task-entry .task-info {
             display: flex;
             flex-direction: column;
@@ -2214,39 +2381,37 @@ DASHBOARD_TEMPLATE = '''
             overflow: hidden;
             text-overflow: ellipsis;
         }
-        .task-entry .task-date { color: #666; font-size: 0.8em; }
+        .task-entry .task-date { color: #555; font-size: 0.8em; }
         .task-entry .task-actions { display: flex; gap: 8px; align-items: center; }
         .review-badge {
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 0.8em;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 0.78em;
             font-weight: bold;
         }
-        .review-badge.reviewed { background: #2e7d32; color: #fff; }
-        .review-badge.rejected { background: #c62828; color: #fff; }
-        .review-badge.unreviewed { background: #444; color: #999; }
+        .review-badge.reviewed { background: rgba(76, 175, 80, 0.2); color: #4caf50; }
+        .review-badge.rejected { background: rgba(244, 67, 54, 0.2); color: #f44336; }
+        .review-badge.unreviewed { background: rgba(150, 150, 150, 0.1); color: #666; }
         .btn-view {
-            padding: 4px 12px;
-            border: 1px solid #00d9ff;
-            border-radius: 4px;
+            padding: 5px 14px;
+            border: 1px solid #00d9ff44;
+            border-radius: 6px;
             background: transparent;
             color: #00d9ff;
             cursor: pointer;
             font-size: 0.85em;
             text-decoration: none;
+            transition: all 0.2s;
         }
-        .btn-view:hover { background: #00d9ff; color: #000; }
-        .expand-icon {
-            transition: transform 0.3s;
-            font-size: 0.8em;
-        }
-        .expand-icon.expanded { transform: rotate(90deg); }
+        .btn-view:hover { background: #00d9ff; color: #000; border-color: #00d9ff; }
         .empty-state {
             text-align: center;
-            padding: 60px 20px;
-            color: #666;
+            padding: 80px 20px;
+            color: #555;
         }
-        .empty-state h2 { color: #444; margin-bottom: 12px; }
+        .empty-state .empty-icon { font-size: 4em; margin-bottom: 20px; opacity: 0.3; }
+        .empty-state h2 { color: #444; margin-bottom: 12px; font-size: 1.4em; }
+        .empty-state p { color: #555; font-size: 1em; }
     </style>
 </head>
 <body>
@@ -2254,25 +2419,50 @@ DASHBOARD_TEMPLATE = '''
         <h1>OSS Recording Dashboard</h1>
         <div class="header-controls">
             <a href="/" class="nav-link">&#8592; Local Review</a>
-            <input type="text" id="ossFolder" value="recordings_new" placeholder="OSS upload folder" />
+            <input type="text" id="ossFolder" value="recordings_new" placeholder="OSS upload folder..." />
             <button class="btn-load" id="loadBtn" onclick="loadDashboard()">Load</button>
             <label class="auto-poll-label">
                 <input type="checkbox" id="autoPoll" /> Auto-refresh (60s)
             </label>
         </div>
     </div>
-    <div class="status-bar" id="statusBar" style="display:none;">
-        <span class="stat">Total recordings: <b id="totalCount">0</b></span>
-        <span class="stat">Annotators: <b id="annotatorCount">0</b></span>
-        <span class="stat">Reviewed: <b id="reviewedCount">0</b></span>
-        <span class="stat">Rejected: <b id="rejectedCount">0</b></span>
-        <span class="stat">Unreviewed: <b id="unreviewedCount">0</b></span>
-        <span class="stat" style="margin-left:auto;">Last updated: <b id="lastUpdated">-</b></span>
+    <div class="stats-row" id="statsRow" style="display:none;">
+        <div class="stat-card">
+            <div class="stat-icon">&#128202;</div>
+            <div class="stat-label">Total</div>
+            <div class="stat-value" id="totalCount">0</div>
+            <div class="stat-sub">recordings loaded</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">&#128101;</div>
+            <div class="stat-label">Annotators</div>
+            <div class="stat-value" id="annotatorCount">0</div>
+            <div class="stat-sub">contributors</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">&#9989;</div>
+            <div class="stat-label">Reviewed</div>
+            <div class="stat-value" id="reviewedCount">0</div>
+            <div class="stat-sub" id="reviewedPct">0% complete</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">&#10060;</div>
+            <div class="stat-label">Rejected</div>
+            <div class="stat-value" id="rejectedCount">0</div>
+            <div class="stat-sub" id="rejectedPct">0% of total</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">&#9203;</div>
+            <div class="stat-label">Unreviewed</div>
+            <div class="stat-value" id="unreviewedCount">0</div>
+            <div class="stat-sub" id="unreviewedPct">0% remaining</div>
+        </div>
     </div>
     <div class="container" id="content">
         <div class="empty-state">
+            <div class="empty-icon">&#128194;</div>
             <h2>No data loaded</h2>
-            <p>Enter an OSS upload folder name above and click Load.</p>
+            <p>Enter an OSS upload folder name above and click Load to get started.</p>
         </div>
     </div>
 
@@ -2280,13 +2470,23 @@ DASHBOARD_TEMPLATE = '''
         let pollInterval = null;
         let dashboardData = null;
 
+        function hashColor(str) {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {
+                hash = str.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            const hue = Math.abs(hash) % 360;
+            return 'hsl(' + hue + ', 55%, 45%)';
+        }
+
         async function loadDashboard() {
             const folder = document.getElementById('ossFolder').value.trim();
             if (!folder) return;
 
             const loadBtn = document.getElementById('loadBtn');
             loadBtn.disabled = true;
-            loadBtn.textContent = 'Loading...';
+            loadBtn.textContent = '';
+            loadBtn.classList.add('loading');
 
             try {
                 const resp = await fetch('/api/oss/dashboard_data?folder=' + encodeURIComponent(folder));
@@ -2294,22 +2494,22 @@ DASHBOARD_TEMPLATE = '''
 
                 if (data.error) {
                     document.getElementById('content').innerHTML =
-                        '<div class="empty-state"><h2>Error</h2><p>' + data.error + '</p></div>';
+                        '<div class="empty-state"><div class="empty-icon">&#9888;</div><h2>Error</h2><p>' + data.error + '</p></div>';
                     return;
                 }
 
                 dashboardData = data;
                 renderDashboard(data);
 
-                document.getElementById('statusBar').style.display = 'flex';
-                document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+                document.getElementById('statsRow').style.display = 'grid';
 
             } catch (err) {
                 document.getElementById('content').innerHTML =
-                    '<div class="empty-state"><h2>Error</h2><p>' + err.message + '</p></div>';
+                    '<div class="empty-state"><div class="empty-icon">&#9888;</div><h2>Error</h2><p>' + err.message + '</p></div>';
             } finally {
                 loadBtn.disabled = false;
                 loadBtn.textContent = 'Load';
+                loadBtn.classList.remove('loading');
             }
         }
 
@@ -2332,62 +2532,78 @@ DASHBOARD_TEMPLATE = '''
             document.getElementById('rejectedCount').textContent = rejectedAll;
             document.getElementById('unreviewedCount').textContent = unreviewedAll;
 
+            const pct = totalAll > 0 ? ((reviewedAll / totalAll) * 100).toFixed(1) : 0;
+            const rejPct = totalAll > 0 ? ((rejectedAll / totalAll) * 100).toFixed(1) : 0;
+            const unrPct = totalAll > 0 ? ((unreviewedAll / totalAll) * 100).toFixed(1) : 0;
+            document.getElementById('reviewedPct').textContent = pct + '% complete';
+            document.getElementById('rejectedPct').textContent = rejPct + '% of total';
+            document.getElementById('unreviewedPct').textContent = unrPct + '% remaining';
+
             if (keys.length === 0) {
                 document.getElementById('content').innerHTML =
-                    '<div class="empty-state"><h2>No recordings found</h2><p>Check the OSS folder name.</p></div>';
+                    '<div class="empty-state"><div class="empty-icon">&#128269;</div><h2>No recordings found</h2><p>Check the OSS folder name and try again.</p></div>';
                 return;
             }
 
             let html = '<div class="annotator-grid">';
-            keys.forEach(username => {
+            keys.forEach((username, idx) => {
                 const a = annotators[username];
-                html += renderAnnotatorCard(username, a);
+                html += renderAnnotatorCard(username, a, idx);
             });
             html += '</div>';
 
             document.getElementById('content').innerHTML = html;
         }
 
-        function renderAnnotatorCard(username, data) {
+        function renderAnnotatorCard(username, data, idx) {
             const folder = document.getElementById('ossFolder').value.trim();
+            const color = hashColor(username);
+            const letter = username.charAt(0).toUpperCase();
+            const completePct = data.total > 0 ? ((data.reviewed + data.rejected) / data.total * 100).toFixed(0) : 0;
+            const reviewedPct = data.total > 0 ? (data.reviewed / data.total * 100) : 0;
+            const rejectedPct = data.total > 0 ? (data.rejected / data.total * 100) : 0;
+
             let tasksHtml = '';
             (data.recordings || []).forEach(rec => {
                 const statusClass = rec.review_status || 'unreviewed';
                 const statusLabel = statusClass.charAt(0).toUpperCase() + statusClass.slice(1);
                 const query = rec.query || rec.task_id || '-';
                 const date = rec.upload_timestamp ? rec.upload_timestamp.split('T')[0] : '-';
-                tasksHtml += `
-                    <div class="task-entry">
-                        <div class="task-info">
-                            <span class="task-id">${rec.task_id || rec.folder_name}</span>
-                            <span class="task-query" title="${query}">${query}</span>
-                            <span class="task-date">${date}</span>
-                        </div>
-                        <div class="task-actions">
-                            <span class="review-badge ${statusClass}">${statusLabel}</span>
-                            <a class="btn-view" href="/oss_review/${encodeURIComponent(rec.folder_name)}?folder=${encodeURIComponent(folder)}">View</a>
-                        </div>
-                    </div>`;
+                tasksHtml +=
+                    '<div class="task-entry">' +
+                    '<div class="task-info">' +
+                    '<span class="task-id">' + (rec.task_id || rec.folder_name) + '</span>' +
+                    '<span class="task-query" title="' + query + '">' + query + '</span>' +
+                    '<span class="task-date">' + date + '</span>' +
+                    '</div>' +
+                    '<div class="task-actions">' +
+                    '<span class="review-badge ' + statusClass + '">' + statusLabel + '</span>' +
+                    '<a class="btn-view" href="/oss_review/' + encodeURIComponent(rec.folder_name) + '?folder=' + encodeURIComponent(folder) + '">View</a>' +
+                    '</div></div>';
             });
 
-            return `
-                <div class="annotator-card">
-                    <div class="annotator-header" onclick="toggleTaskList('${username}')">
-                        <h3>
-                            <span class="expand-icon" id="icon-${username}">&#9654;</span>
-                            ${username}
-                        </h3>
-                        <div class="annotator-stats">
-                            <span class="stat-badge total">${data.total}</span>
-                            <span class="stat-badge reviewed">${data.reviewed}</span>
-                            <span class="stat-badge rejected">${data.rejected}</span>
-                            <span class="stat-badge unreviewed">${data.unreviewed}</span>
-                        </div>
-                    </div>
-                    <div class="task-list" id="tasks-${username}">
-                        ${tasksHtml}
-                    </div>
-                </div>`;
+            return '<div class="annotator-card" style="animation-delay:' + (idx * 0.05) + 's">' +
+                '<div class="annotator-header" onclick="toggleTaskList(\\'' + username + '\\')">' +
+                '<h3>' +
+                '<span class="expand-icon" id="icon-' + username + '">&#9654;</span>' +
+                '<span class="avatar" style="background:' + color + '">' + letter + '</span>' +
+                '<span class="annotator-meta"><span class="username">' + username + '</span>' +
+                '<span class="task-count">' + data.total + ' recordings</span></span>' +
+                '</h3>' +
+                '<div class="annotator-stats">' +
+                '<span class="stat-badge reviewed">' + data.reviewed + '</span>' +
+                '<span class="stat-badge rejected">' + data.rejected + '</span>' +
+                '<span class="stat-badge unreviewed">' + data.unreviewed + '</span>' +
+                '</div></div>' +
+                '<div class="annotator-progress">' +
+                '<div class="progress-track">' +
+                '<div class="progress-fill-reviewed" style="width:' + reviewedPct + '%"></div>' +
+                '<div class="progress-fill-rejected" style="width:' + rejectedPct + '%"></div>' +
+                '</div>' +
+                '<span class="progress-pct">' + completePct + '%</span>' +
+                '</div>' +
+                '<div class="task-list" id="tasks-' + username + '">' + tasksHtml + '</div>' +
+                '</div>';
         }
 
         function toggleTaskList(username) {
@@ -2460,6 +2676,31 @@ OSS_REVIEW_TEMPLATE = '''
             font-size: 0.9em;
         }
         .btn-back:hover { background: #00d9ff; color: #000; }
+
+        /* Mode toggle */
+        .mode-toggle {
+            display: flex;
+            background: #16213e;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid #333;
+        }
+        .mode-toggle button {
+            padding: 8px 20px;
+            border: none;
+            background: transparent;
+            color: #888;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 0.85em;
+            transition: all 0.2s;
+        }
+        .mode-toggle button.active {
+            background: #00d9ff;
+            color: #000;
+        }
+        .mode-toggle button:hover:not(.active) { color: #ccc; }
+
         .main-content {
             flex: 1;
             display: flex;
@@ -2504,6 +2745,8 @@ OSS_REVIEW_TEMPLATE = '''
         }
         .annotator-info-bar .info-item span { color: #888; }
         .annotator-info-bar .info-item b { color: #ffc107; }
+
+        /* Screenshot / image */
         .screenshot-container {
             position: relative;
             display: inline-block;
@@ -2515,24 +2758,51 @@ OSS_REVIEW_TEMPLATE = '''
         }
         .screenshot-container img {
             max-width: 100%;
-            max-height: 65vh;
+            max-height: 55vh;
             display: block;
         }
         .coord-marker {
             position: absolute;
-            width: 24px;
-            height: 24px;
-            border: 3px solid #ff3333;
+            width: 30px;
+            height: 30px;
+            border: 3px solid #ff0040;
             border-radius: 50%;
             transform: translate(-50%, -50%);
             pointer-events: none;
-            box-shadow: 0 0 10px rgba(255, 51, 51, 0.5);
-            animation: pulse 2s infinite;
+            animation: pulse 1.5s infinite;
+            box-shadow: 0 0 15px rgba(255, 0, 64, 0.5);
+        }
+        .coord-marker::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 8px;
+            height: 8px;
+            background: #ff0040;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+        .coord-marker::after {
+            content: attr(data-label);
+            position: absolute;
+            top: -26px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #ff0040;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: bold;
+            white-space: nowrap;
         }
         @keyframes pulse {
-            0%, 100% { box-shadow: 0 0 10px rgba(255, 51, 51, 0.5); }
-            50% { box-shadow: 0 0 20px rgba(255, 51, 51, 0.8); }
+            0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+            50% { transform: translate(-50%, -50%) scale(1.2); opacity: 0.8; }
         }
+
+        /* Step details */
         .step-details {
             background: #1a1a2e;
             padding: 15px;
@@ -2547,17 +2817,37 @@ OSS_REVIEW_TEMPLATE = '''
             border-radius: 4px;
             font-family: 'Courier New', monospace;
             font-size: 0.9em;
-            color: #4caf50;
+            color: #7ee787;
             margin-bottom: 8px;
         }
         .step-details .description { color: #ccc; line-height: 1.5; }
         .step-details .justification {
-            color: #888;
-            font-style: italic;
+            color: #ffc107;
             margin-top: 8px;
             padding-top: 8px;
             border-top: 1px solid #333;
+            border-left: 3px solid #ffc107;
+            padding-left: 10px;
         }
+        .adjusted-badge {
+            display: inline-block;
+            background: #ff9800;
+            color: #000;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75em;
+            font-weight: bold;
+            margin-left: 8px;
+        }
+        .original-coord {
+            color: #888;
+            font-size: 0.8em;
+            text-decoration: line-through;
+            margin-left: 8px;
+        }
+        .current-coord { color: #4caf50; font-weight: bold; }
+
+        /* Review panel (quick mode) */
         .review-panel {
             background: #1a1a2e;
             padding: 15px;
@@ -2588,6 +2878,250 @@ OSS_REVIEW_TEMPLATE = '''
         .review-btn.unreviewed { background: #555; color: #fff; }
         .review-btn.unreviewed:hover { background: #777; }
         .review-btn.unreviewed.active { background: #777; box-shadow: 0 0 10px #777; }
+
+        /* Annotation panels */
+        .annotation-panel {
+            background: #1a1a2e;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border: 1px solid #333;
+        }
+        .annotation-panel h4 { color: #ffc107; margin-bottom: 12px; }
+        .mark-buttons { display: flex; gap: 10px; margin-bottom: 12px; }
+        .mark-btn {
+            padding: 10px 25px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+            flex: 1;
+        }
+        .mark-btn.pass { background: #2e7d32; color: white; }
+        .mark-btn.pass:hover { background: #4caf50; }
+        .mark-btn.pass.active { background: #4caf50; box-shadow: 0 0 10px #4caf50; }
+        .mark-btn.fail { background: #c62828; color: white; }
+        .mark-btn.fail:hover { background: #f44336; }
+        .mark-btn.fail.active { background: #f44336; box-shadow: 0 0 10px #f44336; }
+        .mark-btn.unclear { background: #555; color: white; }
+        .mark-btn.unclear:hover { background: #777; }
+        .mark-btn.unclear.active { background: #777; box-shadow: 0 0 10px #777; }
+
+        .case-evaluation {
+            background: linear-gradient(135deg, #1a2e1a 0%, #1a1a2e 100%);
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border: 1px solid #2e7d32;
+        }
+        .case-evaluation h4 { color: #4caf50; margin-bottom: 12px; }
+        .case-evaluation.fail-mode {
+            background: linear-gradient(135deg, #2e1a1a 0%, #1a1a2e 100%);
+            border-color: #c62828;
+        }
+        .case-evaluation.fail-mode h4 { color: #f44336; }
+        .rating-section {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-bottom: 15px;
+        }
+        .rating-item {
+            background: #0d1117;
+            padding: 12px;
+            border-radius: 6px;
+        }
+        .rating-item label {
+            display: block;
+            color: #888;
+            font-size: 0.85em;
+            margin-bottom: 8px;
+        }
+        .rating-item .label-primary {
+            color: #ffc107;
+            font-size: 0.7em;
+            margin-left: 5px;
+        }
+        .rating-stars { display: flex; gap: 4px; }
+        .rating-star {
+            width: 32px;
+            height: 32px;
+            border: none;
+            background: #333;
+            color: #666;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .rating-star:hover { background: #444; color: #aaa; }
+        .rating-star.active { background: #ffc107; color: #000; }
+        .pass-reason-input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #444;
+            border-radius: 6px;
+            background: #0d1117;
+            color: #e0e0e0;
+            resize: vertical;
+            min-height: 80px;
+            font-family: inherit;
+        }
+        .pass-reason-input::placeholder { color: #555; }
+
+        .knowledge-panel {
+            background: linear-gradient(135deg, #1a1a3e 0%, #16213e 100%);
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border: 1px solid #4a4a8a;
+        }
+        .knowledge-panel h4 { color: #9c88ff; margin-bottom: 12px; }
+        .knowledge-section {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .knowledge-item {
+            background: #0d1117;
+            padding: 12px;
+            border-radius: 6px;
+        }
+        .knowledge-item label {
+            display: block;
+            color: #9c88ff;
+            font-size: 0.85em;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        .knowledge-item .label-hint {
+            color: #666;
+            font-size: 0.75em;
+            font-weight: normal;
+        }
+        .knowledge-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 8px;
+            min-height: 28px;
+        }
+        .knowledge-tag {
+            display: inline-flex;
+            align-items: center;
+            background: #4a4a8a;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 15px;
+            font-size: 0.8em;
+        }
+        .knowledge-tag .remove-tag {
+            margin-left: 6px;
+            cursor: pointer;
+            opacity: 0.7;
+        }
+        .knowledge-tag .remove-tag:hover { opacity: 1; }
+        .knowledge-input-row { display: flex; gap: 6px; }
+        .knowledge-input {
+            flex: 1;
+            padding: 6px 10px;
+            border: 1px solid #444;
+            border-radius: 4px;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            font-size: 0.85em;
+        }
+        .knowledge-add-btn {
+            padding: 6px 12px;
+            background: #4a4a8a;
+            border: none;
+            border-radius: 4px;
+            color: white;
+            cursor: pointer;
+            font-size: 0.85em;
+        }
+        .knowledge-add-btn:hover { background: #5a5a9a; }
+        .step-instructions-input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #444;
+            border-radius: 6px;
+            background: #0d1117;
+            color: #e0e0e0;
+            resize: vertical;
+            min-height: 60px;
+            font-family: inherit;
+            margin-top: 8px;
+        }
+
+        /* Coordinate fine-tuning */
+        .coord-adjust-panel {
+            display: none;
+            background: #252542;
+            padding: 10px 15px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            border: 1px solid #ffc107;
+        }
+        .coord-adjust-panel.show { display: block; }
+        .coord-adjust-panel h5 {
+            color: #ffc107;
+            margin-bottom: 10px;
+            font-size: 0.9em;
+        }
+        .coord-adjust-controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        .coord-field { display: flex; align-items: center; gap: 5px; }
+        .coord-field label { color: #888; font-size: 0.85em; }
+        .coord-input {
+            width: 70px;
+            padding: 5px 8px;
+            border: 1px solid #444;
+            border-radius: 4px;
+            background: #0d1117;
+            color: #e0e0e0;
+            font-family: monospace;
+            font-size: 0.9em;
+            text-align: center;
+        }
+        .coord-input:focus { border-color: #00d9ff; outline: none; }
+        .finetune-btn {
+            padding: 5px 12px;
+            background: #ffc107;
+            border: none;
+            border-radius: 4px;
+            color: #000;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 0.85em;
+        }
+        .finetune-btn:hover { background: #ffca28; }
+        .finetune-btn.save { background: #4caf50; color: white; }
+        .finetune-btn.save:hover { background: #66bb6a; }
+        .finetune-btn.cancel { background: #666; color: white; }
+        .finetune-btn.cancel:hover { background: #888; }
+        .image-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            padding: 8px 12px;
+            background: #1a1a2e;
+            border-radius: 6px;
+            border: 1px solid #333;
+        }
+        .resolution-info {
+            color: #00d9ff;
+            font-size: 0.85em;
+            font-family: monospace;
+        }
+
         .nav-buttons {
             display: flex;
             gap: 10px;
@@ -2621,6 +3155,12 @@ OSS_REVIEW_TEMPLATE = '''
             font-size: 1.2em;
             color: #00d9ff;
         }
+
+        /* Hide panels based on mode */
+        .panel-review { display: block; }
+        .panel-annotation { display: none; }
+        body.annotation-mode .panel-review { display: none; }
+        body.annotation-mode .panel-annotation { display: block; }
     </style>
 </head>
 <body>
@@ -2633,6 +3173,10 @@ OSS_REVIEW_TEMPLATE = '''
             <span>Task: <b id="taskName"></b></span>
             <span>Status: <b id="reviewStatus">-</b></span>
         </div>
+        <div class="mode-toggle">
+            <button id="modeReview" class="active" onclick="setMode('review')">Review Mode</button>
+            <button id="modeAnnotation" onclick="setMode('annotation')">Annotation Mode</button>
+        </div>
         <a class="btn-back" id="backLink" href="/dashboard">&#8592; Dashboard</a>
     </div>
 
@@ -2640,23 +3184,41 @@ OSS_REVIEW_TEMPLATE = '''
         <div class="step-sidebar" id="stepSidebar"></div>
         <div class="content-area" id="contentArea">
             <div class="annotator-info-bar" id="annotatorInfo"></div>
+
             <div class="nav-buttons">
                 <button class="nav-btn" id="prevBtn" onclick="prevStep()">&#9664; Prev</button>
                 <span class="step-counter" id="stepCounter">Step 0 / 0</span>
                 <button class="nav-btn" id="nextBtn" onclick="nextStep()">Next &#9654;</button>
             </div>
-            <div class="screenshot-container" id="screenshotContainer">
+
+            <div id="coordAdjustPanel"></div>
+
+            <div id="imageInfoBar"></div>
+
+            <div class="screenshot-container" id="screenshotContainer" onclick="handleImageClick(event)">
                 <img id="screenshot" src="" alt="Screenshot" />
                 <div class="coord-marker" id="coordMarker" style="display:none;"></div>
             </div>
+
             <div class="step-details" id="stepDetails"></div>
-            <div class="review-panel">
-                <h4>Review Decision</h4>
-                <div class="review-buttons">
-                    <button class="review-btn reviewed" id="btnReviewed" onclick="setReview('reviewed')">Reviewed (Pass)</button>
-                    <button class="review-btn rejected" id="btnRejected" onclick="setReview('rejected')">Rejected</button>
-                    <button class="review-btn unreviewed" id="btnUnreviewed" onclick="setReview('unreviewed')">Clear</button>
+
+            <!-- Review Mode Panel -->
+            <div class="panel-review">
+                <div class="review-panel">
+                    <h4>Review Decision</h4>
+                    <div class="review-buttons">
+                        <button class="review-btn reviewed" id="btnReviewed" onclick="setReview('reviewed')">Reviewed (Pass)</button>
+                        <button class="review-btn rejected" id="btnRejected" onclick="setReview('rejected')">Rejected</button>
+                        <button class="review-btn unreviewed" id="btnUnreviewed" onclick="setReview('unreviewed')">Clear</button>
+                    </div>
                 </div>
+            </div>
+
+            <!-- Annotation Mode Panels -->
+            <div class="panel-annotation">
+                <div class="annotation-panel" id="verdictPanel"></div>
+                <div id="evaluationPanel"></div>
+                <div id="knowledgePanel"></div>
             </div>
         </div>
     </div>
@@ -2667,9 +3229,21 @@ OSS_REVIEW_TEMPLATE = '''
         let taskData = null;
         let currentStep = 0;
         let reviewStatus = 'unreviewed';
+        let currentMode = 'review';
+        let annotation = {};
+        let coordAdjustments = {};
+        let finetuneActive = false;
 
         document.getElementById('backLink').href = '/dashboard';
         document.getElementById('folderName').textContent = folderName;
+
+        function setMode(mode) {
+            currentMode = mode;
+            document.body.classList.toggle('annotation-mode', mode === 'annotation');
+            document.getElementById('modeReview').classList.toggle('active', mode === 'review');
+            document.getElementById('modeAnnotation').classList.toggle('active', mode === 'annotation');
+            if (taskData) renderStep(currentStep);
+        }
 
         async function loadTask() {
             try {
@@ -2682,6 +3256,10 @@ OSS_REVIEW_TEMPLATE = '''
                     document.getElementById('loadingOverlay').style.display = 'none';
                     return;
                 }
+
+                // Load annotation data
+                annotation = taskData.annotation || {};
+                coordAdjustments = taskData.coord_adjustments || {};
 
                 // Set task name
                 document.getElementById('taskName').textContent = taskData.task_name || folderName;
@@ -2725,8 +3303,8 @@ OSS_REVIEW_TEMPLATE = '''
 
         function selectStep(idx) {
             currentStep = idx;
+            finetuneActive = false;
             renderStep(idx);
-            // Update sidebar active state
             document.querySelectorAll('.step-item').forEach((el, i) => {
                 el.classList.toggle('active', i === idx);
             });
@@ -2744,6 +3322,15 @@ OSS_REVIEW_TEMPLATE = '''
             document.getElementById('prevBtn').disabled = idx <= 0;
             document.getElementById('nextBtn').disabled = idx >= steps.length - 1;
 
+            // Check for coordinate adjustment
+            const adj = coordAdjustments[String(idx)];
+            const isAdjusted = !!adj;
+            const origCoord = isAdjusted ? (adj.original || step.coordinate) : step.coordinate;
+
+            // Video dimensions
+            const videoWidth = taskData.video_width || 1920;
+            const videoHeight = taskData.video_height || 1080;
+
             // Load screenshot
             const img = document.getElementById('screenshot');
             img.src = '/oss_frame/' + encodeURIComponent(folderName) + '/' + step.video_time + '?folder=' + encodeURIComponent(ossFolder);
@@ -2751,20 +3338,44 @@ OSS_REVIEW_TEMPLATE = '''
             // Update coordinate marker
             const marker = document.getElementById('coordMarker');
             if (step.has_coordinate && step.coordinate) {
+                marker.setAttribute('data-label', step.action + ' (' + step.coordinate.x + ',' + step.coordinate.y + ')');
                 img.onload = function() {
-                    const scaleX = img.clientWidth / taskData.video_width;
-                    const scaleY = img.clientHeight / taskData.video_height;
+                    const scaleX = img.clientWidth / videoWidth;
+                    const scaleY = img.clientHeight / videoHeight;
                     marker.style.left = (step.coordinate.x * scaleX) + 'px';
                     marker.style.top = (step.coordinate.y * scaleY) + 'px';
                     marker.style.display = 'block';
+
+                    // Show image info
+                    const displayWidth = img.clientWidth;
+                    const displayHeight = img.clientHeight;
+                    const scale = (scaleX * 100).toFixed(1);
+                    document.getElementById('imageInfoBar').innerHTML =
+                        '<div class="image-info"><div class="resolution-info">' +
+                        'Resolution: <b>' + videoWidth + ' x ' + videoHeight + '</b> | Display: <b>' +
+                        displayWidth + ' x ' + displayHeight + '</b> | Scale: <b>' + scale + '%</b></div></div>';
                 };
             } else {
                 marker.style.display = 'none';
+                document.getElementById('imageInfoBar').innerHTML = '';
             }
 
             // Update step details
-            let detailsHtml = '<h4>Step ' + idx + ': ' + (step.action || '') + '</h4>';
-            detailsHtml += '<div class="code">' + (step.code || '') + '</div>';
+            let detailsHtml = '<h4>Step ' + idx + ': ' + (step.action || '');
+            if (isAdjusted) detailsHtml += ' <span class="adjusted-badge">Adjusted</span>';
+            detailsHtml += '</h4>';
+            detailsHtml += '<div class="code"><span id="action-code-display">' + (step.code || '') + '</span></div>';
+            if (step.has_coordinate) {
+                detailsHtml += '<div style="margin-bottom:8px;">';
+                if (isAdjusted) {
+                    detailsHtml += 'Coordinates: <span class="current-coord" id="coord-display">(' + step.coordinate.x + ', ' + step.coordinate.y + ')</span>';
+                    detailsHtml += '<span class="original-coord">(' + origCoord.x + ', ' + origCoord.y + ')</span>';
+                } else {
+                    detailsHtml += 'Coordinates: <span id="coord-display">(' + step.coordinate.x + ', ' + step.coordinate.y + ')</span>';
+                }
+                detailsHtml += ' <button class="finetune-btn" onclick="toggleFinetune()">Fine-tune</button>';
+                detailsHtml += '</div>';
+            }
             if (step.description) {
                 detailsHtml += '<div class="description">' + step.description + '</div>';
             }
@@ -2772,7 +3383,302 @@ OSS_REVIEW_TEMPLATE = '''
                 detailsHtml += '<div class="justification">Justification: ' + step.justification + '</div>';
             }
             document.getElementById('stepDetails').innerHTML = detailsHtml;
+
+            // Coordinate fine-tune panel
+            if (step.has_coordinate) {
+                document.getElementById('coordAdjustPanel').innerHTML =
+                    '<div class="coord-adjust-panel' + (finetuneActive ? ' show' : '') + '" id="finetune-panel">' +
+                    '<h5>Coordinate Fine-tuning</h5>' +
+                    '<div class="coord-adjust-controls">' +
+                    '<div class="coord-field"><label>X:</label><input type="number" class="coord-input" id="coord-x" value="' + step.coordinate.x + '" min="0" max="' + videoWidth + '" oninput="updateMarkerPreview()"></div>' +
+                    '<div class="coord-field"><label>Y:</label><input type="number" class="coord-input" id="coord-y" value="' + step.coordinate.y + '" min="0" max="' + videoHeight + '" oninput="updateMarkerPreview()"></div>' +
+                    '<button class="finetune-btn save" onclick="saveCoordinate()">Save</button>' +
+                    '<button class="finetune-btn cancel" onclick="cancelFinetune()">Cancel</button>' +
+                    '<span style="color:#888;font-size:0.8em;margin-left:10px;">Click on image to set position</span>' +
+                    '</div></div>';
+            } else {
+                document.getElementById('coordAdjustPanel').innerHTML = '';
+            }
+
+            // Store original coords for cancel
+            window._origCoords = { x: step.coordinate.x, y: step.coordinate.y };
+            window._videoDims = { width: videoWidth, height: videoHeight };
+
+            // Render annotation panels
+            renderAnnotationPanels();
         }
+
+        function renderAnnotationPanels() {
+            const ann = annotation || {};
+            const scores = ann.scores || {};
+
+            // Verdict panel
+            document.getElementById('verdictPanel').innerHTML =
+                '<h4>Case Verdict</h4>' +
+                '<div class="mark-buttons">' +
+                '<button class="mark-btn pass' + (ann.mark === 'pass' ? ' active' : '') + '" onclick="setMark(\\'pass\\')">PASS</button>' +
+                '<button class="mark-btn fail' + (ann.mark === 'fail' ? ' active' : '') + '" onclick="setMark(\\'fail\\')">FAIL</button>' +
+                '<button class="mark-btn unclear' + (!ann.mark ? ' active' : '') + '" onclick="setMark(null)">UNCLEAR</button>' +
+                '</div>';
+
+            // Evaluation panel
+            const failMode = ann.mark === 'fail';
+            let evalHtml = '<div class="case-evaluation' + (failMode ? ' fail-mode' : '') + '">';
+            evalHtml += '<h4>Case Evaluation' + (failMode ? ' - Fail Reason' : ' - Pass Reason') + '</h4>';
+            evalHtml += '<div class="rating-section">';
+
+            const dims = [
+                { key: 'correctness', label: 'Correctness', primary: true },
+                { key: 'difficulty', label: 'Difficulty', primary: false },
+                { key: 'knowledge_richness', label: 'Knowledge Richness', primary: false },
+                { key: 'task_value', label: 'Task Value', primary: false }
+            ];
+            dims.forEach(d => {
+                evalHtml += '<div class="rating-item"><label>' + d.label;
+                if (d.primary) evalHtml += ' <span class="label-primary">Primary</span>';
+                evalHtml += '</label><div class="rating-stars">';
+                for (let n = 1; n <= 5; n++) {
+                    evalHtml += '<button class="rating-star' + ((scores[d.key] || 0) >= n ? ' active' : '') + '" onclick="setCaseRating(\\'' + d.key + '\\',' + n + ')">' + n + '</button>';
+                }
+                evalHtml += '</div></div>';
+            });
+            evalHtml += '</div>';
+            evalHtml += '<label style="color:#888;font-size:0.85em;display:block;margin-bottom:8px;">' +
+                (failMode ? 'Fail Reason:' : 'Pass Reason:') + '</label>';
+            evalHtml += '<textarea class="pass-reason-input" id="pass-reason" placeholder="' +
+                (failMode ? 'Describe why this case failed...' : 'Describe why this case passed...') +
+                '" onchange="updatePassReason(this.value)">' + (ann.pass_reason || '') + '</textarea>';
+            evalHtml += '</div>';
+            document.getElementById('evaluationPanel').innerHTML = evalHtml;
+
+            // Knowledge panel
+            let kHtml = '<div class="knowledge-panel">';
+            kHtml += '<h4>Knowledge Points & Related Apps</h4>';
+            kHtml += '<div class="knowledge-section">';
+
+            const fields = [
+                { key: 'osworld_overlap', label: 'OSWorld Overlap', inputId: 'osworld-input' },
+                { key: 'custom_nodes', label: 'Custom Nodes', inputId: 'custom-input' },
+                { key: 'related_apps', label: 'Related Apps', inputId: 'apps-input' }
+            ];
+            fields.forEach(f => {
+                const tags = ann[f.key] || [];
+                kHtml += '<div class="knowledge-item"><label>' + f.label + '</label>';
+                kHtml += '<div class="knowledge-tags">';
+                tags.forEach(tag => {
+                    kHtml += '<span class="knowledge-tag">' + tag + '<span class="remove-tag" onclick="removeTag(\\'' + f.key + '\\',\\'' + tag.replace(/'/g, "\\\\'") + '\\')">x</span></span>';
+                });
+                kHtml += '</div>';
+                kHtml += '<div class="knowledge-input-row">';
+                kHtml += '<input type="text" class="knowledge-input" id="' + f.inputId + '" placeholder="Add...">';
+                kHtml += '<button class="knowledge-add-btn" onclick="addTag(\\'' + f.key + '\\',\\'' + f.inputId + '\\')">+</button>';
+                kHtml += '</div></div>';
+            });
+            kHtml += '</div>';
+            kHtml += '<label style="color:#888;font-size:0.85em;display:block;margin-bottom:4px;">Step-by-Step Instructions:</label>';
+            kHtml += '<textarea class="step-instructions-input" id="step-instructions" placeholder="Describe the step-by-step instructions..." onchange="updateStepInstructions(this.value)">' + (ann.step_by_step_instructions || '') + '</textarea>';
+            kHtml += '</div>';
+            document.getElementById('knowledgePanel').innerHTML = kHtml;
+        }
+
+        // --- Annotation functions ---
+
+        async function setMark(mark) {
+            annotation.mark = mark;
+            await saveOssAnnotation();
+            renderAnnotationPanels();
+            // Sync review status display
+            if (mark === 'pass') { reviewStatus = 'reviewed'; }
+            else if (mark === 'fail') { reviewStatus = 'rejected'; }
+            else { reviewStatus = 'unreviewed'; }
+            updateReviewUI();
+        }
+
+        async function setCaseRating(dim, val) {
+            if (!annotation.scores) annotation.scores = {};
+            annotation.scores[dim] = val;
+            await saveOssAnnotation();
+            renderAnnotationPanels();
+        }
+
+        async function updatePassReason(reason) {
+            annotation.pass_reason = reason;
+            await saveOssAnnotation();
+        }
+
+        async function updateStepInstructions(text) {
+            annotation.step_by_step_instructions = text;
+            await saveOssAnnotation();
+        }
+
+        async function addTag(field, inputId) {
+            const input = document.getElementById(inputId);
+            const value = input.value.trim();
+            if (!value) return;
+            if (!annotation[field]) annotation[field] = [];
+            if (!annotation[field].includes(value)) {
+                annotation[field].push(value);
+                await saveOssAnnotation();
+                renderAnnotationPanels();
+            }
+            input.value = '';
+        }
+
+        async function removeTag(field, value) {
+            if (!annotation[field]) return;
+            const idx = annotation[field].indexOf(value);
+            if (idx > -1) {
+                annotation[field].splice(idx, 1);
+                await saveOssAnnotation();
+                renderAnnotationPanels();
+            }
+        }
+
+        async function saveOssAnnotation() {
+            try {
+                await fetch('/api/oss/annotate', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        folder_name: folderName,
+                        oss_folder: ossFolder,
+                        mark: annotation.mark || null,
+                        scores: annotation.scores || {},
+                        pass_reason: annotation.pass_reason || '',
+                        osworld_overlap: annotation.osworld_overlap || [],
+                        custom_nodes: annotation.custom_nodes || [],
+                        related_apps: annotation.related_apps || [],
+                        step_by_step_instructions: annotation.step_by_step_instructions || ''
+                    })
+                });
+            } catch (err) {
+                console.error('Failed to save annotation:', err);
+            }
+        }
+
+        // --- Coordinate fine-tuning ---
+
+        function toggleFinetune() {
+            finetuneActive = !finetuneActive;
+            const panel = document.getElementById('finetune-panel');
+            if (panel) panel.classList.toggle('show', finetuneActive);
+        }
+
+        function updateMarkerPreview() {
+            const xInput = document.getElementById('coord-x');
+            const yInput = document.getElementById('coord-y');
+            const marker = document.getElementById('coordMarker');
+            const img = document.getElementById('screenshot');
+            if (!xInput || !yInput || !marker || !img) return;
+
+            const x = parseInt(xInput.value) || 0;
+            const y = parseInt(yInput.value) || 0;
+            const videoWidth = window._videoDims.width;
+            const videoHeight = window._videoDims.height;
+            const scaleX = img.clientWidth / videoWidth;
+            const scaleY = img.clientHeight / videoHeight;
+
+            marker.style.left = (x * scaleX) + 'px';
+            marker.style.top = (y * scaleY) + 'px';
+
+            const step = taskData.steps[currentStep];
+            marker.setAttribute('data-label', step.action + ' (' + x + ',' + y + ')');
+
+            const coordDisplay = document.getElementById('coord-display');
+            if (coordDisplay) coordDisplay.textContent = '(' + x + ', ' + y + ')';
+
+            // Update action code display
+            const codeDisplay = document.getElementById('action-code-display');
+            if (codeDisplay) {
+                let newCode = step.code;
+                if (step.action === 'click') {
+                    if (step.code.includes('doubleClick')) newCode = 'pyautogui.doubleClick(' + x + ', ' + y + ')';
+                    else if (step.code.includes('rightClick')) newCode = 'pyautogui.rightClick(' + x + ', ' + y + ')';
+                    else if (step.code.includes('clicks=3')) newCode = 'pyautogui.click(' + x + ', ' + y + ', clicks=3)';
+                    else newCode = 'pyautogui.click(' + x + ', ' + y + ')';
+                }
+                codeDisplay.textContent = newCode;
+            }
+        }
+
+        async function saveCoordinate() {
+            const xInput = document.getElementById('coord-x');
+            const yInput = document.getElementById('coord-y');
+            if (!xInput || !yInput) return;
+
+            const x = parseInt(xInput.value) || 0;
+            const y = parseInt(yInput.value) || 0;
+            const step = taskData.steps[currentStep];
+
+            // Get original
+            let origX, origY;
+            const adj = coordAdjustments[String(currentStep)];
+            if (adj && adj.original) {
+                origX = adj.original.x;
+                origY = adj.original.y;
+            } else {
+                origX = window._origCoords.x;
+                origY = window._origCoords.y;
+            }
+
+            await fetch('/api/oss/update_coordinate', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    folder_name: folderName,
+                    oss_folder: ossFolder,
+                    step_index: currentStep,
+                    x: x, y: y,
+                    original_x: origX, original_y: origY
+                })
+            });
+
+            // Update local data
+            coordAdjustments[String(currentStep)] = {
+                x: x, y: y,
+                original: { x: origX, y: origY }
+            };
+            step.coordinate = { x: x, y: y };
+
+            // Update code
+            if (step.action === 'click') {
+                if (step.code.includes('doubleClick')) step.code = 'pyautogui.doubleClick(' + x + ', ' + y + ')';
+                else if (step.code.includes('rightClick')) step.code = 'pyautogui.rightClick(' + x + ', ' + y + ')';
+                else if (step.code.includes('clicks=3')) step.code = 'pyautogui.click(' + x + ', ' + y + ', clicks=3)';
+                else step.code = 'pyautogui.click(' + x + ', ' + y + ')';
+            }
+
+            finetuneActive = false;
+            renderStep(currentStep);
+        }
+
+        function cancelFinetune() {
+            finetuneActive = false;
+            renderStep(currentStep);
+        }
+
+        function handleImageClick(event) {
+            if (!finetuneActive) return;
+            const img = document.getElementById('screenshot');
+            const rect = img.getBoundingClientRect();
+            const videoWidth = window._videoDims.width;
+            const videoHeight = window._videoDims.height;
+            const scaleX = img.clientWidth / videoWidth;
+            const scaleY = img.clientHeight / videoHeight;
+
+            const clickX = event.clientX - rect.left;
+            const clickY = event.clientY - rect.top;
+            const x = Math.max(0, Math.min(videoWidth, Math.round(clickX / scaleX)));
+            const y = Math.max(0, Math.min(videoHeight, Math.round(clickY / scaleY)));
+
+            const xInput = document.getElementById('coord-x');
+            const yInput = document.getElementById('coord-y');
+            if (xInput) xInput.value = x;
+            if (yInput) yInput.value = y;
+            updateMarkerPreview();
+        }
+
+        // --- Review mode functions ---
 
         function prevStep() { if (currentStep > 0) selectStep(currentStep - 1); }
         function nextStep() { if (taskData && currentStep < taskData.steps.length - 1) selectStep(currentStep + 1); }
@@ -2783,7 +3689,8 @@ OSS_REVIEW_TEMPLATE = '''
                 reviewStatus === 'reviewed' ? '#4caf50' :
                 reviewStatus === 'rejected' ? '#f44336' : '#888';
             ['reviewed', 'rejected', 'unreviewed'].forEach(s => {
-                document.getElementById('btn' + s.charAt(0).toUpperCase() + s.slice(1)).classList.toggle('active', reviewStatus === s);
+                const btn = document.getElementById('btn' + s.charAt(0).toUpperCase() + s.slice(1));
+                if (btn) btn.classList.toggle('active', reviewStatus === s);
             });
         }
 
@@ -2807,8 +3714,14 @@ OSS_REVIEW_TEMPLATE = '''
 
         // Keyboard shortcuts
         document.addEventListener('keydown', function(e) {
+            if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
             if (e.key === 'ArrowLeft') prevStep();
             if (e.key === 'ArrowRight') nextStep();
+            if (currentMode === 'annotation') {
+                if (e.key === '1') setMark('pass');
+                if (e.key === '2') setMark('fail');
+                if (e.key === '3') setMark(null);
+            }
         });
 
         loadTask();
@@ -2921,6 +3834,35 @@ def api_oss_task(folder_name):
         data['review_status'] = review_statuses.get(review_key, 'unreviewed')
         data['folder_name'] = folder_name
 
+        # Include annotation data
+        oss_annotations = load_oss_annotations()
+        data['annotation'] = oss_annotations.get(review_key, {})
+
+        # Include and apply coordinate adjustments
+        coord_adjustments = load_oss_coord_adjustments()
+        data['coord_adjustments'] = {}
+        for step in data.get('steps', []):
+            adj_key = f"{review_key}_{step['index']}"
+            if adj_key in coord_adjustments:
+                adj = coord_adjustments[adj_key]
+                data['coord_adjustments'][str(step['index'])] = adj
+                # Apply adjustment to step data
+                step['coordinate'] = {'x': adj['x'], 'y': adj['y']}
+                x, y = adj['x'], adj['y']
+                code = step['code']
+                if 'doubleClick' in code:
+                    step['code'] = f"pyautogui.doubleClick({x}, {y})"
+                elif 'rightClick' in code:
+                    step['code'] = f"pyautogui.rightClick({x}, {y})"
+                elif 'clicks=3' in code:
+                    step['code'] = f"pyautogui.click({x}, {y}, clicks=3)"
+                elif 'click' in code.lower() and 'pyautogui.click' in code:
+                    step['code'] = f"pyautogui.click({x}, {y})"
+                elif 'moveTo' in code and 'dragTo' in code:
+                    match = re.search(r'dragTo\((\d+),\s*(\d+)\)', code)
+                    if match:
+                        step['code'] = f"pyautogui.moveTo({x}, {y}); pyautogui.dragTo({match.group(1)}, {match.group(2)})"
+
         return jsonify(data)
 
     except Exception as e:
@@ -2969,6 +3911,81 @@ def oss_serve_frame(folder_name, video_time):
     _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
     return Response(buffer.tobytes(), mimetype='image/jpeg')
 
+@app.route('/api/oss/annotate', methods=['POST'])
+def api_oss_annotate():
+    """Save full annotation for an OSS recording."""
+    data = request.json
+    folder_name = data.get('folder_name', '')
+    oss_folder = data.get('oss_folder', 'recordings_new')
+    mark = data.get('mark')  # pass/fail/null
+    scores = data.get('scores', {})
+    pass_reason = data.get('pass_reason', '')
+    osworld_overlap = data.get('osworld_overlap', [])
+    custom_nodes = data.get('custom_nodes', [])
+    related_apps = data.get('related_apps', [])
+    step_by_step_instructions = data.get('step_by_step_instructions', '')
+
+    ann_key = f"{oss_folder}/{folder_name}"
+
+    oss_annotations = load_oss_annotations()
+    oss_annotations[ann_key] = {
+        'mark': mark,
+        'scores': scores,
+        'pass_reason': pass_reason,
+        'osworld_overlap': osworld_overlap,
+        'custom_nodes': custom_nodes,
+        'related_apps': related_apps,
+        'step_by_step_instructions': step_by_step_instructions,
+    }
+    save_oss_annotations(oss_annotations)
+
+    # Sync to review_status.json
+    review_statuses = load_review_status()
+    if mark == 'pass':
+        review_statuses[ann_key] = 'reviewed'
+    elif mark == 'fail':
+        review_statuses[ann_key] = 'rejected'
+    else:
+        review_statuses[ann_key] = 'unreviewed'
+    save_review_status(review_statuses)
+
+    return jsonify({'success': True})
+
+@app.route('/api/oss/update_coordinate', methods=['POST'])
+def api_oss_update_coordinate():
+    """Save coordinate adjustment for an OSS recording step."""
+    data = request.json
+    folder_name = data.get('folder_name', '')
+    oss_folder = data.get('oss_folder', 'recordings_new')
+    step_index = data.get('step_index')
+    new_x = data.get('x')
+    new_y = data.get('y')
+    original_x = data.get('original_x')
+    original_y = data.get('original_y')
+
+    ann_key = f"{oss_folder}/{folder_name}"
+    adj_key = f"{ann_key}_{step_index}"
+
+    coord_adjustments = load_oss_coord_adjustments()
+
+    # Preserve original if already adjusted
+    if adj_key in coord_adjustments and 'original' in coord_adjustments[adj_key]:
+        original = coord_adjustments[adj_key]['original']
+    else:
+        original = {'x': original_x, 'y': original_y}
+
+    coord_adjustments[adj_key] = {
+        'folder_name': folder_name,
+        'oss_folder': oss_folder,
+        'step_index': step_index,
+        'x': new_x,
+        'y': new_y,
+        'original': original,
+    }
+    save_oss_coord_adjustments(coord_adjustments)
+
+    return jsonify({'success': True})
+
 @app.route('/api/oss/review', methods=['POST'])
 def api_oss_review():
     """Save review status for a recording."""
@@ -2984,6 +4001,17 @@ def api_oss_review():
     review_key = f"{oss_folder}/{folder_name}"
     review_statuses[review_key] = status
     save_review_status(review_statuses)
+
+    # Sync to oss_annotations.json mark field
+    oss_annotations = load_oss_annotations()
+    if review_key in oss_annotations:
+        if status == 'reviewed':
+            oss_annotations[review_key]['mark'] = 'pass'
+        elif status == 'rejected':
+            oss_annotations[review_key]['mark'] = 'fail'
+        else:
+            oss_annotations[review_key]['mark'] = None
+        save_oss_annotations(oss_annotations)
 
     return jsonify({'success': True})
 
