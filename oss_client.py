@@ -115,6 +115,7 @@ def download_recording_metadata_files(prefix, local_dir):
         "metadata.json",
         "task_name.json",
         "annotator_info.json",
+        "knowledge_points.json",
     ]
 
     downloaded = {}

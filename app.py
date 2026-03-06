@@ -25,6 +25,9 @@ REVIEW_STATUS_FILE = Path(os.environ.get('CUA_REVIEW_STATUS', './review_status.j
 OSS_ANNOTATIONS_FILE = Path(os.environ.get('CUA_OSS_ANNOTATIONS', './oss_annotations.json'))
 OSS_COORD_ADJUSTMENTS_FILE = Path(os.environ.get('CUA_OSS_COORD_ADJ', './oss_coord_adjustments.json'))
 
+# Server-side dashboard cache: { folder_name: { annotators: {...}, folder: str, _timestamp: float } }
+_dashboard_cache = {}
+
 def parse_list_field(value):
     """Parse a comma-separated or JSON list field."""
     if not value:
@@ -378,6 +381,15 @@ def load_oss_task_data(local_dir):
             tn_data = json.load(f)
             task_name = tn_data.get('task_name', '')
 
+    # Load knowledge points
+    knowledge_points = []
+    kp_file = local_dir / 'knowledge_points.json'
+    if kp_file.exists():
+        with open(kp_file) as f:
+            kp_data = json.load(f)
+            if isinstance(kp_data, list):
+                knowledge_points = kp_data
+
     return {
         'video_file': video_file,
         'video_start_ts': video_start_ts,
@@ -386,6 +398,7 @@ def load_oss_task_data(local_dir):
         'steps': steps,
         'annotator_info': annotator_info,
         'task_name': task_name,
+        'knowledge_points': knowledge_points,
     }
 
 HTML_TEMPLATE = '''
@@ -2419,7 +2432,7 @@ DASHBOARD_TEMPLATE = '''
         <h1>OSS Recording Dashboard</h1>
         <div class="header-controls">
             <a href="/" class="nav-link">&#8592; Local Review</a>
-            <input type="text" id="ossFolder" value="recordings_new" placeholder="OSS upload folder..." />
+            <input type="text" id="ossFolder" value="recordings_0303" placeholder="OSS upload folder..." />
             <button class="btn-load" id="loadBtn" onclick="loadDashboard()">Load</button>
             <label class="auto-poll-label">
                 <input type="checkbox" id="autoPoll" /> Auto-refresh (60s)
@@ -2653,132 +2666,287 @@ OSS_REVIEW_TEMPLATE = '''
         }
         .header {
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            padding: 12px 20px;
+            padding: 10px 16px;
             display: flex;
             justify-content: space-between;
             align-items: center;
             border-bottom: 2px solid #00d9ff;
             flex-wrap: wrap;
-            gap: 8px;
+            gap: 6px;
         }
-        .header h1 { font-size: 1.2em; color: #00d9ff; }
-        .header-info { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
-        .header-info span { color: #888; font-size: 0.85em; }
+        .header h1 { font-size: 1.1em; color: #00d9ff; }
+        .header-info { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+        .header-info span { color: #888; font-size: 0.8em; }
         .header-info b { color: #e0e0e0; }
         .btn-back {
-            padding: 6px 16px;
+            padding: 5px 14px;
             border: 1px solid #00d9ff;
             border-radius: 4px;
             background: transparent;
             color: #00d9ff;
             cursor: pointer;
             text-decoration: none;
-            font-size: 0.9em;
+            font-size: 0.85em;
+            transition: all 0.2s;
         }
         .btn-back:hover { background: #00d9ff; color: #000; }
-
-        /* Mode toggle */
         .mode-toggle {
             display: flex;
             background: #16213e;
-            border-radius: 8px;
+            border-radius: 6px;
             overflow: hidden;
             border: 1px solid #333;
         }
         .mode-toggle button {
-            padding: 8px 20px;
+            padding: 5px 14px;
             border: none;
             background: transparent;
             color: #888;
             cursor: pointer;
             font-weight: bold;
-            font-size: 0.85em;
+            font-size: 0.8em;
             transition: all 0.2s;
         }
-        .mode-toggle button.active {
-            background: #00d9ff;
-            color: #000;
-        }
+        .mode-toggle button.active { background: #00d9ff; color: #000; }
         .mode-toggle button:hover:not(.active) { color: #ccc; }
 
-        .main-content {
+        /* Main layout: recording sidebar | step sidebar | content */
+        .main-layout {
             flex: 1;
             display: flex;
             overflow: hidden;
         }
+
+        /* Recording sidebar (left) */
+        .rec-sidebar {
+            width: 260px;
+            background: #0d1020;
+            border-right: 1px solid #252542;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .rec-sidebar-header {
+            padding: 10px 12px;
+            background: #16213e;
+            border-bottom: 1px solid #252542;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .rec-sidebar-header h3 { color: #888; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.5px; }
+        .rec-sidebar-header .rec-count { color: #00d9ff; font-size: 0.8em; font-weight: bold; }
+        .rec-filter {
+            padding: 6px 12px;
+            border-bottom: 1px solid #252542;
+        }
+        .rec-filter input {
+            width: 100%;
+            padding: 5px 8px;
+            border: 1px solid #333;
+            border-radius: 4px;
+            background: #0f0f1a;
+            color: #e0e0e0;
+            font-size: 0.8em;
+        }
+        .rec-filter input:focus { border-color: #00d9ff; outline: none; }
+        .rec-list {
+            flex: 1;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 4px 6px;
+            scrollbar-width: thin;
+            scrollbar-color: #333 #0d1020;
+        }
+        .rec-list::-webkit-scrollbar { width: 6px; }
+        .rec-list::-webkit-scrollbar-track { background: #0d1020; }
+        .rec-list::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+        .rec-list::-webkit-scrollbar-thumb:hover { background: #555; }
+
+        /* Person group */
+        .person-group { margin-bottom: 4px; }
+        .person-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 8px;
+            background: #151530;
+            border-radius: 5px;
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.15s;
+        }
+        .person-header:hover { background: #1e1e40; }
+        .person-toggle {
+            font-size: 0.65em;
+            color: #666;
+            transition: transform 0.2s;
+            flex-shrink: 0;
+            width: 12px;
+            text-align: center;
+        }
+        .person-toggle.expanded { transform: rotate(90deg); }
+        .person-avatar {
+            width: 22px; height: 22px;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 800; font-size: 0.7em; color: white;
+            flex-shrink: 0;
+        }
+        .person-name {
+            color: #ccc;
+            font-size: 0.8em;
+            font-weight: 600;
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .person-stats {
+            display: flex;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+        .person-stat {
+            font-size: 0.65em;
+            padding: 1px 5px;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+        .person-stat.rev { background: rgba(76,175,80,0.2); color: #4caf50; }
+        .person-stat.rej { background: rgba(244,67,54,0.2); color: #f44336; }
+        .person-stat.total { background: rgba(0,217,255,0.1); color: #00d9ff; }
+        .person-tasks {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.25s ease;
+            padding-left: 10px;
+        }
+        .person-tasks.expanded { max-height: 5000px; }
+
+        .rec-item {
+            padding: 6px 8px;
+            margin: 2px 0;
+            background: #131322;
+            border-radius: 5px;
+            cursor: pointer;
+            border-left: 3px solid transparent;
+            transition: all 0.15s;
+            font-size: 0.75em;
+        }
+        .rec-item:hover { background: #1e1e35; }
+        .rec-item.active { border-left-color: #00d9ff; background: #1e1e35; }
+        .rec-item.reviewed { border-left-color: #4caf50; }
+        .rec-item.rejected { border-left-color: #f44336; }
+        .rec-item .rec-title {
+            color: #ccc;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 1px;
+        }
+        .rec-item .rec-meta {
+            color: #666;
+            font-size: 0.85em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .rec-item .rec-status {
+            display: inline-block;
+            padding: 1px 5px;
+            border-radius: 8px;
+            font-size: 0.8em;
+            font-weight: bold;
+            margin-top: 1px;
+        }
+        .rec-item .rec-status.reviewed { background: rgba(76,175,80,0.2); color: #4caf50; }
+        .rec-item .rec-status.rejected { background: rgba(244,67,54,0.2); color: #f44336; }
+        .rec-item .rec-status.unreviewed { background: rgba(150,150,150,0.1); color: #666; }
+
+        /* Step sidebar */
         .step-sidebar {
-            width: 220px;
+            width: 180px;
             background: #16213e;
             overflow-y: auto;
-            padding: 10px;
+            padding: 8px;
             border-right: 1px solid #333;
         }
+        .step-sidebar-header {
+            padding: 6px 8px;
+            color: #888;
+            font-size: 0.75em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
         .step-item {
-            padding: 8px 10px;
-            margin: 3px 0;
+            padding: 6px 8px;
+            margin: 2px 0;
             background: #1a1a2e;
-            border-radius: 6px;
+            border-radius: 4px;
             cursor: pointer;
-            border-left: 4px solid transparent;
-            transition: all 0.2s;
-            font-size: 0.85em;
+            border-left: 3px solid transparent;
+            transition: all 0.15s;
+            font-size: 0.8em;
         }
         .step-item:hover { background: #252542; }
         .step-item.active { border-left-color: #00d9ff; background: #252542; }
         .step-item .step-num { color: #00d9ff; font-weight: bold; }
-        .step-item .step-action { color: #888; font-size: 0.85em; }
+        .step-item .step-action { color: #888; font-size: 0.9em; }
+
+        /* Content area */
         .content-area {
             flex: 1;
-            padding: 15px 20px;
+            padding: 12px 16px;
             overflow-y: auto;
         }
         .annotator-info-bar {
             background: linear-gradient(135deg, #1e3a5f 0%, #16213e 100%);
-            padding: 12px 16px;
-            border-radius: 8px;
-            margin-bottom: 12px;
-            border-left: 4px solid #ffc107;
+            padding: 10px 14px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            border-left: 3px solid #ffc107;
             display: flex;
-            gap: 24px;
+            gap: 20px;
             flex-wrap: wrap;
-            font-size: 0.9em;
+            font-size: 0.85em;
         }
         .annotator-info-bar .info-item span { color: #888; }
         .annotator-info-bar .info-item b { color: #ffc107; }
 
-        /* Screenshot / image */
+        /* Screenshot */
         .screenshot-container {
             position: relative;
             display: inline-block;
-            margin-bottom: 12px;
+            margin-bottom: 10px;
             background: #000;
-            border-radius: 8px;
+            border-radius: 6px;
             overflow: hidden;
             max-width: 100%;
         }
         .screenshot-container img {
             max-width: 100%;
-            max-height: 55vh;
+            max-height: 50vh;
             display: block;
         }
         .coord-marker {
             position: absolute;
-            width: 30px;
-            height: 30px;
+            width: 28px;
+            height: 28px;
             border: 3px solid #ff0040;
             border-radius: 50%;
             transform: translate(-50%, -50%);
             pointer-events: none;
             animation: pulse 1.5s infinite;
-            box-shadow: 0 0 15px rgba(255, 0, 64, 0.5);
+            box-shadow: 0 0 12px rgba(255, 0, 64, 0.5);
         }
         .coord-marker::before {
             content: '';
             position: absolute;
-            top: 50%;
-            left: 50%;
-            width: 8px;
-            height: 8px;
+            top: 50%; left: 50%;
+            width: 6px; height: 6px;
             background: #ff0040;
             border-radius: 50%;
             transform: translate(-50%, -50%);
@@ -2786,88 +2954,80 @@ OSS_REVIEW_TEMPLATE = '''
         .coord-marker::after {
             content: attr(data-label);
             position: absolute;
-            top: -26px;
-            left: 50%;
+            top: -24px; left: 50%;
             transform: translateX(-50%);
             background: #ff0040;
             color: white;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 10px;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 9px;
             font-weight: bold;
             white-space: nowrap;
         }
         @keyframes pulse {
             0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
-            50% { transform: translate(-50%, -50%) scale(1.2); opacity: 0.8; }
+            50% { transform: translate(-50%, -50%) scale(1.15); opacity: 0.8; }
         }
 
         /* Step details */
         .step-details {
             background: #1a1a2e;
-            padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 12px;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
             border: 1px solid #333;
         }
-        .step-details h4 { color: #00d9ff; margin-bottom: 8px; font-size: 0.95em; }
+        .step-details h4 { color: #00d9ff; margin-bottom: 6px; font-size: 0.9em; }
         .step-details .code {
             background: #0d1117;
-            padding: 10px;
+            padding: 8px;
             border-radius: 4px;
             font-family: 'Courier New', monospace;
-            font-size: 0.9em;
+            font-size: 0.85em;
             color: #7ee787;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
         }
-        .step-details .description { color: #ccc; line-height: 1.5; }
+        .step-details .description { color: #ccc; line-height: 1.4; font-size: 0.9em; }
         .step-details .justification {
             color: #ffc107;
-            margin-top: 8px;
-            padding-top: 8px;
+            margin-top: 6px;
+            padding-top: 6px;
             border-top: 1px solid #333;
             border-left: 3px solid #ffc107;
-            padding-left: 10px;
+            padding-left: 8px;
+            font-size: 0.85em;
         }
         .adjusted-badge {
             display: inline-block;
             background: #ff9800;
             color: #000;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 0.75em;
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 0.7em;
             font-weight: bold;
-            margin-left: 8px;
+            margin-left: 6px;
         }
-        .original-coord {
-            color: #888;
-            font-size: 0.8em;
-            text-decoration: line-through;
-            margin-left: 8px;
-        }
+        .original-coord { color: #888; font-size: 0.8em; text-decoration: line-through; margin-left: 6px; }
         .current-coord { color: #4caf50; font-weight: bold; }
 
-        /* Review panel (quick mode) */
+        /* Review panel */
         .review-panel {
             background: #1a1a2e;
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #333;
-            margin-bottom: 12px;
-        }
-        .review-panel h4 { color: #ffc107; margin-bottom: 12px; }
-        .review-buttons {
-            display: flex;
-            gap: 10px;
-        }
-        .review-btn {
-            padding: 10px 30px;
-            border: none;
+            padding: 12px;
             border-radius: 6px;
+            border: 1px solid #333;
+            margin-bottom: 10px;
+        }
+        .review-panel h4 { color: #ffc107; margin-bottom: 10px; font-size: 0.9em; }
+        .review-buttons { display: flex; gap: 8px; }
+        .review-btn {
+            padding: 8px 24px;
+            border: none;
+            border-radius: 5px;
             cursor: pointer;
             font-weight: bold;
             transition: all 0.2s;
-            font-size: 1em;
+            font-size: 0.9em;
         }
         .review-btn.reviewed { background: #2e7d32; color: #fff; }
         .review-btn.reviewed:hover { background: #4caf50; }
@@ -2882,21 +3042,22 @@ OSS_REVIEW_TEMPLATE = '''
         /* Annotation panels */
         .annotation-panel {
             background: #1a1a2e;
-            padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 12px;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
             border: 1px solid #333;
         }
-        .annotation-panel h4 { color: #ffc107; margin-bottom: 12px; }
-        .mark-buttons { display: flex; gap: 10px; margin-bottom: 12px; }
+        .annotation-panel h4 { color: #ffc107; margin-bottom: 10px; font-size: 0.9em; }
+        .mark-buttons { display: flex; gap: 8px; margin-bottom: 10px; }
         .mark-btn {
-            padding: 10px 25px;
+            padding: 8px 20px;
             border: none;
-            border-radius: 6px;
+            border-radius: 5px;
             cursor: pointer;
             font-weight: bold;
             transition: all 0.2s;
             flex: 1;
+            font-size: 0.9em;
         }
         .mark-btn.pass { background: #2e7d32; color: white; }
         .mark-btn.pass:hover { background: #4caf50; }
@@ -2910,12 +3071,12 @@ OSS_REVIEW_TEMPLATE = '''
 
         .case-evaluation {
             background: linear-gradient(135deg, #1a2e1a 0%, #1a1a2e 100%);
-            padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 12px;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
             border: 1px solid #2e7d32;
         }
-        .case-evaluation h4 { color: #4caf50; margin-bottom: 12px; }
+        .case-evaluation h4 { color: #4caf50; margin-bottom: 10px; font-size: 0.9em; }
         .case-evaluation.fail-mode {
             background: linear-gradient(135deg, #2e1a1a 0%, #1a1a2e 100%);
             border-color: #c62828;
@@ -2924,182 +3085,113 @@ OSS_REVIEW_TEMPLATE = '''
         .rating-section {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
-            gap: 12px;
-            margin-bottom: 15px;
+            gap: 10px;
+            margin-bottom: 12px;
         }
-        .rating-item {
-            background: #0d1117;
-            padding: 12px;
-            border-radius: 6px;
-        }
-        .rating-item label {
-            display: block;
-            color: #888;
-            font-size: 0.85em;
-            margin-bottom: 8px;
-        }
-        .rating-item .label-primary {
-            color: #ffc107;
-            font-size: 0.7em;
-            margin-left: 5px;
-        }
-        .rating-stars { display: flex; gap: 4px; }
+        .rating-item { background: #0d1117; padding: 10px; border-radius: 5px; }
+        .rating-item label { display: block; color: #888; font-size: 0.8em; margin-bottom: 6px; }
+        .rating-item .label-primary { color: #ffc107; font-size: 0.7em; margin-left: 4px; }
+        .rating-stars { display: flex; gap: 3px; }
         .rating-star {
-            width: 32px;
-            height: 32px;
+            width: 28px; height: 28px;
             border: none;
             background: #333;
             color: #666;
             border-radius: 4px;
             cursor: pointer;
-            font-size: 14px;
+            font-size: 12px;
             transition: all 0.2s;
         }
         .rating-star:hover { background: #444; color: #aaa; }
         .rating-star.active { background: #ffc107; color: #000; }
         .pass-reason-input {
             width: 100%;
-            padding: 10px;
+            padding: 8px;
             border: 1px solid #444;
-            border-radius: 6px;
-            background: #0d1117;
-            color: #e0e0e0;
-            resize: vertical;
-            min-height: 80px;
-            font-family: inherit;
-        }
-        .pass-reason-input::placeholder { color: #555; }
-
-        .knowledge-panel {
-            background: linear-gradient(135deg, #1a1a3e 0%, #16213e 100%);
-            padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 12px;
-            border: 1px solid #4a4a8a;
-        }
-        .knowledge-panel h4 { color: #9c88ff; margin-bottom: 12px; }
-        .knowledge-section {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
-            margin-bottom: 12px;
-        }
-        .knowledge-item {
-            background: #0d1117;
-            padding: 12px;
-            border-radius: 6px;
-        }
-        .knowledge-item label {
-            display: block;
-            color: #9c88ff;
-            font-size: 0.85em;
-            margin-bottom: 8px;
-            font-weight: bold;
-        }
-        .knowledge-item .label-hint {
-            color: #666;
-            font-size: 0.75em;
-            font-weight: normal;
-        }
-        .knowledge-tags {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-            margin-bottom: 8px;
-            min-height: 28px;
-        }
-        .knowledge-tag {
-            display: inline-flex;
-            align-items: center;
-            background: #4a4a8a;
-            color: white;
-            padding: 4px 10px;
-            border-radius: 15px;
-            font-size: 0.8em;
-        }
-        .knowledge-tag .remove-tag {
-            margin-left: 6px;
-            cursor: pointer;
-            opacity: 0.7;
-        }
-        .knowledge-tag .remove-tag:hover { opacity: 1; }
-        .knowledge-input-row { display: flex; gap: 6px; }
-        .knowledge-input {
-            flex: 1;
-            padding: 6px 10px;
-            border: 1px solid #444;
-            border-radius: 4px;
-            background: #1a1a2e;
-            color: #e0e0e0;
-            font-size: 0.85em;
-        }
-        .knowledge-add-btn {
-            padding: 6px 12px;
-            background: #4a4a8a;
-            border: none;
-            border-radius: 4px;
-            color: white;
-            cursor: pointer;
-            font-size: 0.85em;
-        }
-        .knowledge-add-btn:hover { background: #5a5a9a; }
-        .step-instructions-input {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #444;
-            border-radius: 6px;
+            border-radius: 5px;
             background: #0d1117;
             color: #e0e0e0;
             resize: vertical;
             min-height: 60px;
             font-family: inherit;
-            margin-top: 8px;
+            font-size: 0.85em;
+        }
+        .pass-reason-input::placeholder { color: #555; }
+
+        .knowledge-panel {
+            background: linear-gradient(135deg, #1a1a3e 0%, #16213e 100%);
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            border: 1px solid #4a4a8a;
+        }
+        .knowledge-panel h4 { color: #9c88ff; margin-bottom: 10px; font-size: 0.9em; }
+        .knowledge-section {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .knowledge-item { background: #0d1117; padding: 10px; border-radius: 5px; }
+        .knowledge-item label {
+            display: block; color: #9c88ff;
+            font-size: 0.8em; margin-bottom: 6px; font-weight: bold;
+        }
+        .knowledge-item .label-hint { color: #666; font-size: 0.75em; font-weight: normal; }
+        .knowledge-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; min-height: 24px; }
+        .knowledge-tag {
+            display: inline-flex; align-items: center;
+            background: #4a4a8a; color: white;
+            padding: 3px 8px; border-radius: 12px; font-size: 0.75em;
+        }
+        .knowledge-tag .remove-tag { margin-left: 5px; cursor: pointer; opacity: 0.7; }
+        .knowledge-tag .remove-tag:hover { opacity: 1; }
+        .knowledge-input-row { display: flex; gap: 4px; }
+        .knowledge-input {
+            flex: 1; padding: 4px 8px;
+            border: 1px solid #444; border-radius: 4px;
+            background: #1a1a2e; color: #e0e0e0; font-size: 0.8em;
+        }
+        .knowledge-add-btn {
+            padding: 4px 10px; background: #4a4a8a;
+            border: none; border-radius: 4px;
+            color: white; cursor: pointer; font-size: 0.8em;
+        }
+        .knowledge-add-btn:hover { background: #5a5a9a; }
+        .step-instructions-input {
+            width: 100%; padding: 8px;
+            border: 1px solid #444; border-radius: 5px;
+            background: #0d1117; color: #e0e0e0;
+            resize: vertical; min-height: 50px;
+            font-family: inherit; font-size: 0.85em; margin-top: 6px;
         }
 
         /* Coordinate fine-tuning */
         .coord-adjust-panel {
             display: none;
             background: #252542;
-            padding: 10px 15px;
-            border-radius: 6px;
-            margin-bottom: 10px;
+            padding: 8px 12px;
+            border-radius: 5px;
+            margin-bottom: 8px;
             border: 1px solid #ffc107;
         }
         .coord-adjust-panel.show { display: block; }
-        .coord-adjust-panel h5 {
-            color: #ffc107;
-            margin-bottom: 10px;
-            font-size: 0.9em;
-        }
-        .coord-adjust-controls {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            flex-wrap: wrap;
-        }
-        .coord-field { display: flex; align-items: center; gap: 5px; }
-        .coord-field label { color: #888; font-size: 0.85em; }
+        .coord-adjust-panel h5 { color: #ffc107; margin-bottom: 8px; font-size: 0.85em; }
+        .coord-adjust-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .coord-field { display: flex; align-items: center; gap: 4px; }
+        .coord-field label { color: #888; font-size: 0.8em; }
         .coord-input {
-            width: 70px;
-            padding: 5px 8px;
-            border: 1px solid #444;
-            border-radius: 4px;
-            background: #0d1117;
-            color: #e0e0e0;
-            font-family: monospace;
-            font-size: 0.9em;
-            text-align: center;
+            width: 65px; padding: 4px 6px;
+            border: 1px solid #444; border-radius: 4px;
+            background: #0d1117; color: #e0e0e0;
+            font-family: monospace; font-size: 0.85em; text-align: center;
         }
         .coord-input:focus { border-color: #00d9ff; outline: none; }
         .finetune-btn {
-            padding: 5px 12px;
-            background: #ffc107;
-            border: none;
-            border-radius: 4px;
-            color: #000;
-            font-weight: bold;
-            cursor: pointer;
-            font-size: 0.85em;
+            padding: 4px 10px; background: #ffc107;
+            border: none; border-radius: 4px;
+            color: #000; font-weight: bold;
+            cursor: pointer; font-size: 0.8em;
         }
         .finetune-btn:hover { background: #ffca28; }
         .finetune-btn.save { background: #4caf50; color: white; }
@@ -3107,60 +3199,56 @@ OSS_REVIEW_TEMPLATE = '''
         .finetune-btn.cancel { background: #666; color: white; }
         .finetune-btn.cancel:hover { background: #888; }
         .image-info {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-            padding: 8px 12px;
-            background: #1a1a2e;
-            border-radius: 6px;
-            border: 1px solid #333;
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 6px; padding: 6px 10px;
+            background: #1a1a2e; border-radius: 5px; border: 1px solid #333;
         }
-        .resolution-info {
-            color: #00d9ff;
-            font-size: 0.85em;
-            font-family: monospace;
-        }
+        .resolution-info { color: #00d9ff; font-size: 0.8em; font-family: monospace; }
 
-        .nav-buttons {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 12px;
-        }
+        .nav-buttons { display: flex; gap: 8px; margin-bottom: 10px; }
         .nav-btn {
-            padding: 8px 20px;
-            border: 1px solid #444;
-            border-radius: 6px;
-            background: #1a1a2e;
-            color: #e0e0e0;
-            cursor: pointer;
-            transition: all 0.2s;
+            padding: 6px 16px; border: 1px solid #444;
+            border-radius: 5px; background: #1a1a2e;
+            color: #e0e0e0; cursor: pointer; transition: all 0.2s;
         }
         .nav-btn:hover { border-color: #00d9ff; color: #00d9ff; }
         .nav-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .step-counter {
-            color: #888;
-            font-size: 0.9em;
-            display: flex;
-            align-items: center;
-        }
+        .step-counter { color: #888; font-size: 0.85em; display: flex; align-items: center; }
+
         .loading-overlay {
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(15, 15, 26, 0.9);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-            font-size: 1.2em;
-            color: #00d9ff;
+            display: flex; justify-content: center; align-items: center;
+            z-index: 1000; font-size: 1.2em; color: #00d9ff;
         }
 
-        /* Hide panels based on mode */
         .panel-review { display: block; }
         .panel-annotation { display: none; }
         body.annotation-mode .panel-review { display: none; }
         body.annotation-mode .panel-annotation { display: block; }
+
+        /* Human-provided data highlight */
+        .human-data-section {
+            background: linear-gradient(135deg, #1a2e2a 0%, #16213e 100%);
+            padding: 10px 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            border: 1px solid #00897b;
+        }
+        .human-data-section h4 { color: #4db6ac; margin-bottom: 8px; font-size: 0.9em; }
+        .human-data-section .data-field { margin-bottom: 6px; }
+        .human-data-section .data-label { color: #888; font-size: 0.78em; display: block; margin-bottom: 2px; }
+        .human-data-section .data-value {
+            color: #e0e0e0; font-size: 0.85em;
+            background: #0d1117; padding: 6px 8px; border-radius: 4px;
+            white-space: pre-wrap; line-height: 1.4;
+        }
+        .human-data-section .kp-tag {
+            display: inline-block; background: #00897b; color: white;
+            padding: 2px 8px; border-radius: 10px;
+            font-size: 0.78em; margin: 2px;
+        }
     </style>
 </head>
 <body>
@@ -3169,30 +3257,48 @@ OSS_REVIEW_TEMPLATE = '''
     <div class="header">
         <h1>OSS Review</h1>
         <div class="header-info">
-            <span>Folder: <b id="folderName"></b></span>
             <span>Task: <b id="taskName"></b></span>
             <span>Status: <b id="reviewStatus">-</b></span>
         </div>
         <div class="mode-toggle">
-            <button id="modeReview" class="active" onclick="setMode('review')">Review Mode</button>
-            <button id="modeAnnotation" onclick="setMode('annotation')">Annotation Mode</button>
+            <button id="modeReview" class="active" onclick="setMode('review')">Review</button>
+            <button id="modeAnnotation" onclick="setMode('annotation')">Annotate</button>
         </div>
-        <a class="btn-back" id="backLink" href="/dashboard">&#8592; Dashboard</a>
+        <a class="btn-back" href="/dashboard" id="backLink">Dashboard</a>
     </div>
 
-    <div class="main-content">
-        <div class="step-sidebar" id="stepSidebar"></div>
+    <div class="main-layout">
+        <!-- Recording sidebar -->
+        <div class="rec-sidebar" id="recSidebar">
+            <div class="rec-sidebar-header">
+                <h3>Recordings</h3>
+                <span class="rec-count" id="recCount">0</span>
+            </div>
+            <div class="rec-filter">
+                <input type="text" id="recFilterInput" placeholder="Filter..." oninput="filterRecordings()" />
+            </div>
+            <div class="rec-list" id="recList">
+                <div style="padding:20px;color:#666;text-align:center;font-size:0.85em;">Loading...</div>
+            </div>
+        </div>
+
+        <!-- Step sidebar -->
+        <div class="step-sidebar" id="stepSidebar">
+            <div class="step-sidebar-header">Steps</div>
+        </div>
+
+        <!-- Content -->
         <div class="content-area" id="contentArea">
             <div class="annotator-info-bar" id="annotatorInfo"></div>
+            <div id="humanDataSection"></div>
 
             <div class="nav-buttons">
-                <button class="nav-btn" id="prevBtn" onclick="prevStep()">&#9664; Prev</button>
+                <button class="nav-btn" id="prevBtn" onclick="prevStep()">Prev</button>
                 <span class="step-counter" id="stepCounter">Step 0 / 0</span>
-                <button class="nav-btn" id="nextBtn" onclick="nextStep()">Next &#9654;</button>
+                <button class="nav-btn" id="nextBtn" onclick="nextStep()">Next</button>
             </div>
 
             <div id="coordAdjustPanel"></div>
-
             <div id="imageInfoBar"></div>
 
             <div class="screenshot-container" id="screenshotContainer" onclick="handleImageClick(event)">
@@ -3202,7 +3308,6 @@ OSS_REVIEW_TEMPLATE = '''
 
             <div class="step-details" id="stepDetails"></div>
 
-            <!-- Review Mode Panel -->
             <div class="panel-review">
                 <div class="review-panel">
                     <h4>Review Decision</h4>
@@ -3214,7 +3319,6 @@ OSS_REVIEW_TEMPLATE = '''
                 </div>
             </div>
 
-            <!-- Annotation Mode Panels -->
             <div class="panel-annotation">
                 <div class="annotation-panel" id="verdictPanel"></div>
                 <div id="evaluationPanel"></div>
@@ -3224,8 +3328,8 @@ OSS_REVIEW_TEMPLATE = '''
     </div>
 
     <script>
-        const folderName = '{{ folder_name }}';
-        const ossFolder = new URLSearchParams(window.location.search).get('folder') || 'recordings_new';
+        let folderName = '{{ folder_name }}';
+        const ossFolder = new URLSearchParams(window.location.search).get('folder') || 'recordings_0303';
         let taskData = null;
         let currentStep = 0;
         let reviewStatus = 'unreviewed';
@@ -3233,17 +3337,155 @@ OSS_REVIEW_TEMPLATE = '''
         let annotation = {};
         let coordAdjustments = {};
         let finetuneActive = false;
+        let allRecordings = [];
+        let filteredRecordings = [];
 
         document.getElementById('backLink').href = '/dashboard';
-        document.getElementById('folderName').textContent = folderName;
+
+        // ========== Recording sidebar ==========
+
+        async function loadRecordingSidebar() {
+            try {
+                const resp = await fetch('/api/oss/folder_recordings?folder=' + encodeURIComponent(ossFolder));
+                const data = await resp.json();
+                allRecordings = data.recordings || [];
+                filteredRecordings = allRecordings;
+                document.getElementById('recCount').textContent = allRecordings.length;
+                renderRecordingSidebar();
+            } catch (err) {
+                document.getElementById('recList').innerHTML = '<div style="padding:10px;color:#f44336;font-size:0.8em;">Failed to load</div>';
+            }
+        }
+
+        // Track which person groups are expanded
+        let expandedPersons = {};
+
+        function hashColor(str) {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+            return 'hsl(' + (Math.abs(hash) % 360) + ', 55%, 42%)';
+        }
+
+        function renderRecordingSidebar() {
+            const list = document.getElementById('recList');
+            if (filteredRecordings.length === 0) {
+                list.innerHTML = '<div style="padding:20px;color:#666;text-align:center;font-size:0.8em;">No recordings</div>';
+                return;
+            }
+
+            // Group by username
+            const groups = {};
+            filteredRecordings.forEach(rec => {
+                const user = rec.username || 'Unknown';
+                if (!groups[user]) groups[user] = [];
+                groups[user].push(rec);
+            });
+
+            // Auto-expand the group containing current recording
+            const currentUser = filteredRecordings.find(r => r.folder_name === folderName);
+            if (currentUser) {
+                const uname = currentUser.username || 'Unknown';
+                if (expandedPersons[uname] === undefined) expandedPersons[uname] = true;
+            }
+
+            const sortedUsers = Object.keys(groups).sort();
+            let html = '';
+            sortedUsers.forEach(user => {
+                const recs = groups[user];
+                const rev = recs.filter(r => r.review_status === 'reviewed').length;
+                const rej = recs.filter(r => r.review_status === 'rejected').length;
+                const isExpanded = !!expandedPersons[user];
+                const color = hashColor(user);
+                const letter = user.charAt(0).toUpperCase();
+                const safeUser = user.replace(/'/g, "\\\\'");
+
+                html += '<div class="person-group">';
+                html += '<div class="person-header" onclick="togglePerson(\\'' + safeUser + '\\')">';
+                html += '<span class="person-toggle' + (isExpanded ? ' expanded' : '') + '" id="ptoggle-' + user + '">&#9654;</span>';
+                html += '<span class="person-avatar" style="background:' + color + '">' + letter + '</span>';
+                html += '<span class="person-name">' + user + '</span>';
+                html += '<span class="person-stats">';
+                if (rev > 0) html += '<span class="person-stat rev">' + rev + '</span>';
+                if (rej > 0) html += '<span class="person-stat rej">' + rej + '</span>';
+                html += '<span class="person-stat total">' + recs.length + '</span>';
+                html += '</span></div>';
+
+                html += '<div class="person-tasks' + (isExpanded ? ' expanded' : '') + '" id="ptasks-' + user + '">';
+                recs.forEach(rec => {
+                    const isActive = rec.folder_name === folderName;
+                    const status = rec.review_status || 'unreviewed';
+                    const statusLabel = status.charAt(0).toUpperCase() + status.slice(1);
+                    const title = rec.task_id || rec.folder_name.substring(0, 30);
+                    html += '<div class="rec-item ' + status + (isActive ? ' active' : '') + '" ' +
+                        'onclick="switchRecording(\\'' + rec.folder_name.replace(/'/g, "\\\\'") + '\\')">' +
+                        '<div class="rec-title" title="' + rec.folder_name + '">' + title + '</div>' +
+                        '<span class="rec-status ' + status + '">' + statusLabel + '</span>' +
+                        '</div>';
+                });
+                html += '</div></div>';
+            });
+
+            list.innerHTML = html;
+
+            // Scroll active item into view
+            setTimeout(() => {
+                const active = list.querySelector('.rec-item.active');
+                if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }, 100);
+        }
+
+        function togglePerson(user) {
+            expandedPersons[user] = !expandedPersons[user];
+            const tasks = document.getElementById('ptasks-' + user);
+            const toggle = document.getElementById('ptoggle-' + user);
+            if (tasks) tasks.classList.toggle('expanded');
+            if (toggle) toggle.classList.toggle('expanded');
+        }
+
+        function filterRecordings() {
+            const q = document.getElementById('recFilterInput').value.toLowerCase();
+            if (!q) {
+                filteredRecordings = allRecordings;
+            } else {
+                filteredRecordings = allRecordings.filter(r =>
+                    (r.folder_name || '').toLowerCase().includes(q) ||
+                    (r.task_id || '').toLowerCase().includes(q) ||
+                    (r.username || '').toLowerCase().includes(q) ||
+                    (r.query || '').toLowerCase().includes(q)
+                );
+            }
+            renderRecordingSidebar();
+        }
+
+        function switchRecording(newFolderName) {
+            if (newFolderName === folderName) return;
+            folderName = newFolderName;
+            // Update URL without reload
+            const url = '/oss_review/' + encodeURIComponent(folderName) + '?folder=' + encodeURIComponent(ossFolder);
+            history.pushState(null, '', url);
+            document.title = 'OSS Review - ' + folderName;
+            // Reset and reload
+            taskData = null;
+            currentStep = 0;
+            finetuneActive = false;
+            annotation = {};
+            coordAdjustments = {};
+            document.getElementById('loadingOverlay').style.display = 'flex';
+            loadTask();
+            renderRecordingSidebar();
+        }
+
+        // ========== Mode toggle ==========
 
         function setMode(mode) {
             currentMode = mode;
             document.body.classList.toggle('annotation-mode', mode === 'annotation');
             document.getElementById('modeReview').classList.toggle('active', mode === 'review');
             document.getElementById('modeAnnotation').classList.toggle('active', mode === 'annotation');
-            if (taskData) renderStep(currentStep);
+            if (taskData) renderAnnotationPanels();
         }
+
+        // ========== Load task ==========
 
         async function loadTask() {
             try {
@@ -3257,27 +3499,48 @@ OSS_REVIEW_TEMPLATE = '''
                     return;
                 }
 
-                // Load annotation data
                 annotation = taskData.annotation || {};
                 coordAdjustments = taskData.coord_adjustments || {};
 
-                // Set task name
+                // Pre-populate annotation fields from annotator data if annotation is empty
+                const info = taskData.annotator_info || {};
+                if (!annotation.step_by_step_instructions && info.step_by_step_instruction) {
+                    annotation.step_by_step_instructions = info.step_by_step_instruction;
+                }
+                const humanKP = taskData.knowledge_points || [];
+                if (humanKP.length > 0 && (!annotation.custom_nodes || annotation.custom_nodes.length === 0)) {
+                    annotation.custom_nodes = [...humanKP];
+                }
+
                 document.getElementById('taskName').textContent = taskData.task_name || folderName;
 
-                // Render annotator info
-                const info = taskData.annotator_info || {};
+                // Annotator info bar
                 let infoHtml = '';
                 if (info.username) infoHtml += '<div class="info-item"><span>Annotator:</span> <b>' + info.username + '</b></div>';
-                if (info.task_id) infoHtml += '<div class="info-item"><span>Task ID:</span> <b>' + info.task_id + '</b></div>';
-                if (info.query) infoHtml += '<div class="info-item"><span>Query:</span> <b>' + info.query + '</b></div>';
-                if (info.upload_timestamp) infoHtml += '<div class="info-item"><span>Uploaded:</span> <b>' + info.upload_timestamp + '</b></div>';
-                document.getElementById('annotatorInfo').innerHTML = infoHtml || '<div class="info-item"><span>No annotator info available</span></div>';
+                if (info.task_id) infoHtml += '<div class="info-item"><span>Task:</span> <b>' + info.task_id + '</b></div>';
+                if (info.query) infoHtml += '<div class="info-item"><span>Query:</span> <b>' + (info.query.length > 80 ? info.query.substring(0, 80) + '...' : info.query) + '</b></div>';
+                document.getElementById('annotatorInfo').innerHTML = infoHtml || '<div class="info-item"><span>No annotator info</span></div>';
 
-                // Set review status
+                // Human-provided data section
+                let hdHtml = '';
+                if (info.step_by_step_instruction || humanKP.length > 0) {
+                    hdHtml = '<div class="human-data-section"><h4>Human-Provided Data</h4>';
+                    if (info.step_by_step_instruction) {
+                        hdHtml += '<div class="data-field"><span class="data-label">Step-by-Step Instruction (from annotator)</span>' +
+                            '<div class="data-value">' + info.step_by_step_instruction.replace(/\\\\n/g, '\\n').replace(/\\n/g, '<br>') + '</div></div>';
+                    }
+                    if (humanKP.length > 0) {
+                        hdHtml += '<div class="data-field"><span class="data-label">Knowledge Points (from annotator)</span><div>';
+                        humanKP.forEach(kp => { hdHtml += '<span class="kp-tag">' + kp + '</span>'; });
+                        hdHtml += '</div></div>';
+                    }
+                    hdHtml += '</div>';
+                }
+                document.getElementById('humanDataSection').innerHTML = hdHtml;
+
                 reviewStatus = taskData.review_status || 'unreviewed';
                 updateReviewUI();
 
-                // Render step sidebar
                 renderStepSidebar();
                 renderStep(0);
 
@@ -3289,12 +3552,14 @@ OSS_REVIEW_TEMPLATE = '''
             }
         }
 
+        // ========== Step sidebar ==========
+
         function renderStepSidebar() {
             const steps = taskData.steps || [];
-            let html = '';
+            let html = '<div class="step-sidebar-header">Steps (' + steps.length + ')</div>';
             steps.forEach((step, i) => {
                 html += '<div class="step-item' + (i === 0 ? ' active' : '') + '" onclick="selectStep(' + i + ')" id="step-' + i + '">' +
-                    '<span class="step-num">Step ' + i + '</span> ' +
+                    '<span class="step-num">' + i + '</span> ' +
                     '<span class="step-action">' + (step.action || '') + '</span>' +
                     '</div>';
             });
@@ -3310,32 +3575,27 @@ OSS_REVIEW_TEMPLATE = '''
             });
         }
 
+        // ========== Render step ==========
+
         function renderStep(idx) {
             const steps = taskData.steps || [];
             if (idx < 0 || idx >= steps.length) return;
-
             const step = steps[idx];
             currentStep = idx;
 
-            // Update counter
             document.getElementById('stepCounter').textContent = 'Step ' + idx + ' / ' + (steps.length - 1);
             document.getElementById('prevBtn').disabled = idx <= 0;
             document.getElementById('nextBtn').disabled = idx >= steps.length - 1;
 
-            // Check for coordinate adjustment
             const adj = coordAdjustments[String(idx)];
             const isAdjusted = !!adj;
             const origCoord = isAdjusted ? (adj.original || step.coordinate) : step.coordinate;
-
-            // Video dimensions
             const videoWidth = taskData.video_width || 1920;
             const videoHeight = taskData.video_height || 1080;
 
-            // Load screenshot
             const img = document.getElementById('screenshot');
             img.src = '/oss_frame/' + encodeURIComponent(folderName) + '/' + step.video_time + '?folder=' + encodeURIComponent(ossFolder);
 
-            // Update coordinate marker
             const marker = document.getElementById('coordMarker');
             if (step.has_coordinate && step.coordinate) {
                 marker.setAttribute('data-label', step.action + ' (' + step.coordinate.x + ',' + step.coordinate.y + ')');
@@ -3345,46 +3605,35 @@ OSS_REVIEW_TEMPLATE = '''
                     marker.style.left = (step.coordinate.x * scaleX) + 'px';
                     marker.style.top = (step.coordinate.y * scaleY) + 'px';
                     marker.style.display = 'block';
-
-                    // Show image info
-                    const displayWidth = img.clientWidth;
-                    const displayHeight = img.clientHeight;
-                    const scale = (scaleX * 100).toFixed(1);
                     document.getElementById('imageInfoBar').innerHTML =
                         '<div class="image-info"><div class="resolution-info">' +
-                        'Resolution: <b>' + videoWidth + ' x ' + videoHeight + '</b> | Display: <b>' +
-                        displayWidth + ' x ' + displayHeight + '</b> | Scale: <b>' + scale + '%</b></div></div>';
+                        'Res: <b>' + videoWidth + 'x' + videoHeight + '</b> | Scale: <b>' + (scaleX * 100).toFixed(0) + '%</b></div></div>';
                 };
             } else {
                 marker.style.display = 'none';
                 document.getElementById('imageInfoBar').innerHTML = '';
             }
 
-            // Update step details
-            let detailsHtml = '<h4>Step ' + idx + ': ' + (step.action || '');
-            if (isAdjusted) detailsHtml += ' <span class="adjusted-badge">Adjusted</span>';
-            detailsHtml += '</h4>';
-            detailsHtml += '<div class="code"><span id="action-code-display">' + (step.code || '') + '</span></div>';
+            // Step details
+            let dHtml = '<h4>Step ' + idx + ': ' + (step.action || '');
+            if (isAdjusted) dHtml += ' <span class="adjusted-badge">Adjusted</span>';
+            dHtml += '</h4>';
+            dHtml += '<div class="code"><span id="action-code-display">' + (step.code || '') + '</span></div>';
             if (step.has_coordinate) {
-                detailsHtml += '<div style="margin-bottom:8px;">';
+                dHtml += '<div style="margin-bottom:6px;font-size:0.85em;">';
                 if (isAdjusted) {
-                    detailsHtml += 'Coordinates: <span class="current-coord" id="coord-display">(' + step.coordinate.x + ', ' + step.coordinate.y + ')</span>';
-                    detailsHtml += '<span class="original-coord">(' + origCoord.x + ', ' + origCoord.y + ')</span>';
+                    dHtml += 'Coord: <span class="current-coord" id="coord-display">(' + step.coordinate.x + ', ' + step.coordinate.y + ')</span>';
+                    dHtml += '<span class="original-coord">(' + origCoord.x + ', ' + origCoord.y + ')</span>';
                 } else {
-                    detailsHtml += 'Coordinates: <span id="coord-display">(' + step.coordinate.x + ', ' + step.coordinate.y + ')</span>';
+                    dHtml += 'Coord: <span id="coord-display">(' + step.coordinate.x + ', ' + step.coordinate.y + ')</span>';
                 }
-                detailsHtml += ' <button class="finetune-btn" onclick="toggleFinetune()">Fine-tune</button>';
-                detailsHtml += '</div>';
+                dHtml += ' <button class="finetune-btn" onclick="toggleFinetune()">Fine-tune</button></div>';
             }
-            if (step.description) {
-                detailsHtml += '<div class="description">' + step.description + '</div>';
-            }
-            if (step.justification) {
-                detailsHtml += '<div class="justification">Justification: ' + step.justification + '</div>';
-            }
-            document.getElementById('stepDetails').innerHTML = detailsHtml;
+            if (step.description) dHtml += '<div class="description">' + step.description + '</div>';
+            if (step.justification) dHtml += '<div class="justification">' + step.justification + '</div>';
+            document.getElementById('stepDetails').innerHTML = dHtml;
 
-            // Coordinate fine-tune panel
+            // Coord finetune panel
             if (step.has_coordinate) {
                 document.getElementById('coordAdjustPanel').innerHTML =
                     '<div class="coord-adjust-panel' + (finetuneActive ? ' show' : '') + '" id="finetune-panel">' +
@@ -3394,25 +3643,24 @@ OSS_REVIEW_TEMPLATE = '''
                     '<div class="coord-field"><label>Y:</label><input type="number" class="coord-input" id="coord-y" value="' + step.coordinate.y + '" min="0" max="' + videoHeight + '" oninput="updateMarkerPreview()"></div>' +
                     '<button class="finetune-btn save" onclick="saveCoordinate()">Save</button>' +
                     '<button class="finetune-btn cancel" onclick="cancelFinetune()">Cancel</button>' +
-                    '<span style="color:#888;font-size:0.8em;margin-left:10px;">Click on image to set position</span>' +
+                    '<span style="color:#888;font-size:0.75em;margin-left:8px;">Click image to set</span>' +
                     '</div></div>';
             } else {
                 document.getElementById('coordAdjustPanel').innerHTML = '';
             }
 
-            // Store original coords for cancel
             window._origCoords = { x: step.coordinate.x, y: step.coordinate.y };
             window._videoDims = { width: videoWidth, height: videoHeight };
 
-            // Render annotation panels
             renderAnnotationPanels();
         }
+
+        // ========== Annotation panels ==========
 
         function renderAnnotationPanels() {
             const ann = annotation || {};
             const scores = ann.scores || {};
 
-            // Verdict panel
             document.getElementById('verdictPanel').innerHTML =
                 '<h4>Case Verdict</h4>' +
                 '<div class="mark-buttons">' +
@@ -3421,12 +3669,10 @@ OSS_REVIEW_TEMPLATE = '''
                 '<button class="mark-btn unclear' + (!ann.mark ? ' active' : '') + '" onclick="setMark(null)">UNCLEAR</button>' +
                 '</div>';
 
-            // Evaluation panel
             const failMode = ann.mark === 'fail';
             let evalHtml = '<div class="case-evaluation' + (failMode ? ' fail-mode' : '') + '">';
-            evalHtml += '<h4>Case Evaluation' + (failMode ? ' - Fail Reason' : ' - Pass Reason') + '</h4>';
+            evalHtml += '<h4>Evaluation' + (failMode ? ' - Fail Reason' : ' - Pass Reason') + '</h4>';
             evalHtml += '<div class="rating-section">';
-
             const dims = [
                 { key: 'correctness', label: 'Correctness', primary: true },
                 { key: 'difficulty', label: 'Difficulty', primary: false },
@@ -3443,19 +3689,16 @@ OSS_REVIEW_TEMPLATE = '''
                 evalHtml += '</div></div>';
             });
             evalHtml += '</div>';
-            evalHtml += '<label style="color:#888;font-size:0.85em;display:block;margin-bottom:8px;">' +
-                (failMode ? 'Fail Reason:' : 'Pass Reason:') + '</label>';
             evalHtml += '<textarea class="pass-reason-input" id="pass-reason" placeholder="' +
-                (failMode ? 'Describe why this case failed...' : 'Describe why this case passed...') +
+                (failMode ? 'Describe why failed...' : 'Describe why passed...') +
                 '" onchange="updatePassReason(this.value)">' + (ann.pass_reason || '') + '</textarea>';
             evalHtml += '</div>';
             document.getElementById('evaluationPanel').innerHTML = evalHtml;
 
             // Knowledge panel
             let kHtml = '<div class="knowledge-panel">';
-            kHtml += '<h4>Knowledge Points & Related Apps</h4>';
+            kHtml += '<h4>Knowledge Points & Apps</h4>';
             kHtml += '<div class="knowledge-section">';
-
             const fields = [
                 { key: 'osworld_overlap', label: 'OSWorld Overlap', inputId: 'osworld-input' },
                 { key: 'custom_nodes', label: 'Custom Nodes', inputId: 'custom-input' },
@@ -3475,23 +3718,23 @@ OSS_REVIEW_TEMPLATE = '''
                 kHtml += '</div></div>';
             });
             kHtml += '</div>';
-            kHtml += '<label style="color:#888;font-size:0.85em;display:block;margin-bottom:4px;">Step-by-Step Instructions:</label>';
-            kHtml += '<textarea class="step-instructions-input" id="step-instructions" placeholder="Describe the step-by-step instructions..." onchange="updateStepInstructions(this.value)">' + (ann.step_by_step_instructions || '') + '</textarea>';
+            kHtml += '<label style="color:#888;font-size:0.8em;display:block;margin-bottom:3px;">Step-by-Step Instructions:</label>';
+            kHtml += '<textarea class="step-instructions-input" id="step-instructions" placeholder="Step-by-step instructions..." onchange="updateStepInstructions(this.value)">' + (ann.step_by_step_instructions || '') + '</textarea>';
             kHtml += '</div>';
             document.getElementById('knowledgePanel').innerHTML = kHtml;
         }
 
-        // --- Annotation functions ---
+        // ========== Annotation actions ==========
 
         async function setMark(mark) {
             annotation.mark = mark;
             await saveOssAnnotation();
             renderAnnotationPanels();
-            // Sync review status display
-            if (mark === 'pass') { reviewStatus = 'reviewed'; }
-            else if (mark === 'fail') { reviewStatus = 'rejected'; }
-            else { reviewStatus = 'unreviewed'; }
+            if (mark === 'pass') reviewStatus = 'reviewed';
+            else if (mark === 'fail') reviewStatus = 'rejected';
+            else reviewStatus = 'unreviewed';
             updateReviewUI();
+            updateRecSidebarStatus();
         }
 
         async function setCaseRating(dim, val) {
@@ -3551,12 +3794,19 @@ OSS_REVIEW_TEMPLATE = '''
                         step_by_step_instructions: annotation.step_by_step_instructions || ''
                     })
                 });
-            } catch (err) {
-                console.error('Failed to save annotation:', err);
+            } catch (err) { console.error('Save failed:', err); }
+        }
+
+        function updateRecSidebarStatus() {
+            // Update the recording sidebar to reflect new status
+            const rec = allRecordings.find(r => r.folder_name === folderName);
+            if (rec) {
+                rec.review_status = reviewStatus;
+                renderRecordingSidebar();
             }
         }
 
-        // --- Coordinate fine-tuning ---
+        // ========== Coordinate fine-tuning ==========
 
         function toggleFinetune() {
             finetuneActive = !finetuneActive;
@@ -3570,107 +3820,61 @@ OSS_REVIEW_TEMPLATE = '''
             const marker = document.getElementById('coordMarker');
             const img = document.getElementById('screenshot');
             if (!xInput || !yInput || !marker || !img) return;
-
             const x = parseInt(xInput.value) || 0;
             const y = parseInt(yInput.value) || 0;
-            const videoWidth = window._videoDims.width;
-            const videoHeight = window._videoDims.height;
-            const scaleX = img.clientWidth / videoWidth;
-            const scaleY = img.clientHeight / videoHeight;
-
+            const scaleX = img.clientWidth / window._videoDims.width;
+            const scaleY = img.clientHeight / window._videoDims.height;
             marker.style.left = (x * scaleX) + 'px';
             marker.style.top = (y * scaleY) + 'px';
-
             const step = taskData.steps[currentStep];
             marker.setAttribute('data-label', step.action + ' (' + x + ',' + y + ')');
-
-            const coordDisplay = document.getElementById('coord-display');
-            if (coordDisplay) coordDisplay.textContent = '(' + x + ', ' + y + ')';
-
-            // Update action code display
-            const codeDisplay = document.getElementById('action-code-display');
-            if (codeDisplay) {
-                let newCode = step.code;
-                if (step.action === 'click') {
-                    if (step.code.includes('doubleClick')) newCode = 'pyautogui.doubleClick(' + x + ', ' + y + ')';
-                    else if (step.code.includes('rightClick')) newCode = 'pyautogui.rightClick(' + x + ', ' + y + ')';
-                    else if (step.code.includes('clicks=3')) newCode = 'pyautogui.click(' + x + ', ' + y + ', clicks=3)';
-                    else newCode = 'pyautogui.click(' + x + ', ' + y + ')';
-                }
-                codeDisplay.textContent = newCode;
-            }
+            const cd = document.getElementById('coord-display');
+            if (cd) cd.textContent = '(' + x + ', ' + y + ')';
         }
 
         async function saveCoordinate() {
             const xInput = document.getElementById('coord-x');
             const yInput = document.getElementById('coord-y');
             if (!xInput || !yInput) return;
-
             const x = parseInt(xInput.value) || 0;
             const y = parseInt(yInput.value) || 0;
             const step = taskData.steps[currentStep];
-
-            // Get original
             let origX, origY;
             const adj = coordAdjustments[String(currentStep)];
-            if (adj && adj.original) {
-                origX = adj.original.x;
-                origY = adj.original.y;
-            } else {
-                origX = window._origCoords.x;
-                origY = window._origCoords.y;
-            }
+            if (adj && adj.original) { origX = adj.original.x; origY = adj.original.y; }
+            else { origX = window._origCoords.x; origY = window._origCoords.y; }
 
             await fetch('/api/oss/update_coordinate', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
-                    folder_name: folderName,
-                    oss_folder: ossFolder,
-                    step_index: currentStep,
-                    x: x, y: y,
+                    folder_name: folderName, oss_folder: ossFolder,
+                    step_index: currentStep, x: x, y: y,
                     original_x: origX, original_y: origY
                 })
             });
-
-            // Update local data
-            coordAdjustments[String(currentStep)] = {
-                x: x, y: y,
-                original: { x: origX, y: origY }
-            };
+            coordAdjustments[String(currentStep)] = { x: x, y: y, original: { x: origX, y: origY } };
             step.coordinate = { x: x, y: y };
-
-            // Update code
             if (step.action === 'click') {
                 if (step.code.includes('doubleClick')) step.code = 'pyautogui.doubleClick(' + x + ', ' + y + ')';
                 else if (step.code.includes('rightClick')) step.code = 'pyautogui.rightClick(' + x + ', ' + y + ')';
                 else if (step.code.includes('clicks=3')) step.code = 'pyautogui.click(' + x + ', ' + y + ', clicks=3)';
                 else step.code = 'pyautogui.click(' + x + ', ' + y + ')';
             }
-
             finetuneActive = false;
             renderStep(currentStep);
         }
 
-        function cancelFinetune() {
-            finetuneActive = false;
-            renderStep(currentStep);
-        }
+        function cancelFinetune() { finetuneActive = false; renderStep(currentStep); }
 
         function handleImageClick(event) {
             if (!finetuneActive) return;
             const img = document.getElementById('screenshot');
             const rect = img.getBoundingClientRect();
-            const videoWidth = window._videoDims.width;
-            const videoHeight = window._videoDims.height;
-            const scaleX = img.clientWidth / videoWidth;
-            const scaleY = img.clientHeight / videoHeight;
-
-            const clickX = event.clientX - rect.left;
-            const clickY = event.clientY - rect.top;
-            const x = Math.max(0, Math.min(videoWidth, Math.round(clickX / scaleX)));
-            const y = Math.max(0, Math.min(videoHeight, Math.round(clickY / scaleY)));
-
+            const scaleX = img.clientWidth / window._videoDims.width;
+            const scaleY = img.clientHeight / window._videoDims.height;
+            const x = Math.max(0, Math.min(window._videoDims.width, Math.round((event.clientX - rect.left) / scaleX)));
+            const y = Math.max(0, Math.min(window._videoDims.height, Math.round((event.clientY - rect.top) / scaleY)));
             const xInput = document.getElementById('coord-x');
             const yInput = document.getElementById('coord-y');
             if (xInput) xInput.value = x;
@@ -3678,7 +3882,7 @@ OSS_REVIEW_TEMPLATE = '''
             updateMarkerPreview();
         }
 
-        // --- Review mode functions ---
+        // ========== Navigation ==========
 
         function prevStep() { if (currentStep > 0) selectStep(currentStep - 1); }
         function nextStep() { if (taskData && currentStep < taskData.steps.length - 1) selectStep(currentStep + 1); }
@@ -3697,19 +3901,14 @@ OSS_REVIEW_TEMPLATE = '''
         async function setReview(status) {
             reviewStatus = status;
             updateReviewUI();
+            updateRecSidebarStatus();
             try {
                 await fetch('/api/oss/review', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        folder_name: folderName,
-                        oss_folder: ossFolder,
-                        status: status
-                    })
+                    body: JSON.stringify({ folder_name: folderName, oss_folder: ossFolder, status: status })
                 });
-            } catch (err) {
-                console.error('Failed to save review:', err);
-            }
+            } catch (err) { console.error('Save failed:', err); }
         }
 
         // Keyboard shortcuts
@@ -3724,6 +3923,8 @@ OSS_REVIEW_TEMPLATE = '''
             }
         });
 
+        // ========== Init ==========
+        loadRecordingSidebar();
         loadTask();
     </script>
 </body>
@@ -3742,7 +3943,7 @@ def dashboard():
 @app.route('/api/oss/list')
 def api_oss_list():
     """List recordings from an OSS folder."""
-    folder = request.args.get('folder', 'recordings_new')
+    folder = request.args.get('folder', 'recordings_0303')
     try:
         import oss_client
         recordings = oss_client.list_recordings(folder)
@@ -3750,64 +3951,131 @@ def api_oss_list():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/oss/dashboard_data')
-def api_oss_dashboard_data():
-    """Aggregated per-annotator statistics for the dashboard."""
-    folder = request.args.get('folder', 'recordings_new')
-    try:
-        import oss_client
+def _fetch_dashboard_data(folder):
+    """Fetch dashboard data from OSS for a folder. Uses cache for metadata."""
+    import oss_client
+    import time
 
-        recordings = oss_client.list_recordings(folder)
-        review_statuses = load_review_status()
+    recordings = oss_client.list_recordings(folder)
 
-        annotators = {}
+    # Check if we have cached metadata for this folder
+    cached = _dashboard_cache.get(folder)
+    cached_recs = {}
+    if cached:
+        # Build lookup of cached recording metadata by folder_name
+        for ann_data in cached.get('annotators', {}).values():
+            for rec in ann_data.get('recordings', []):
+                cached_recs[rec['folder_name']] = rec
 
-        for rec_name in recordings:
-            # Try to get metadata from OSS
+    review_statuses = load_review_status()
+    annotators = {}
+
+    for rec_name in recordings:
+        review_key = f"{folder}/{rec_name}"
+        rec_review_status = review_statuses.get(review_key, 'unreviewed')
+
+        # Use cached metadata if available, otherwise fetch from OSS
+        if rec_name in cached_recs:
+            meta = cached_recs[rec_name]
+            username = meta.get('_username', meta.get('username', 'Unknown'))
+            task_id = meta.get('_task_id', meta.get('task_id', ''))
+            query = meta.get('_query', meta.get('query', ''))
+            upload_ts = meta.get('_upload_ts', meta.get('upload_timestamp', ''))
+        else:
             prefix = folder.rstrip('/') + '/' + rec_name
             metadata = oss_client.get_recording_metadata(prefix)
-
             if metadata is None:
-                # Infer metadata from folder name
                 metadata = oss_client.parse_folder_name_metadata(rec_name)
-
             username = metadata.get('username', 'Unknown')
             task_id = metadata.get('task_id', '')
             query = metadata.get('query', '')
             upload_ts = metadata.get('upload_timestamp', '')
 
-            # Get review status for this recording
-            review_key = f"{folder}/{rec_name}"
-            rec_review_status = review_statuses.get(review_key, 'unreviewed')
+        if username not in annotators:
+            annotators[username] = {
+                'total': 0, 'reviewed': 0, 'rejected': 0, 'unreviewed': 0,
+                'recordings': []
+            }
 
-            if username not in annotators:
-                annotators[username] = {
-                    'total': 0,
-                    'reviewed': 0,
-                    'rejected': 0,
-                    'unreviewed': 0,
-                    'recordings': []
-                }
+        annotators[username]['total'] += 1
+        annotators[username][rec_review_status] += 1
+        annotators[username]['recordings'].append({
+            'folder_name': rec_name,
+            'task_id': task_id,
+            'query': query,
+            'upload_timestamp': upload_ts,
+            'review_status': rec_review_status,
+            '_username': username,
+            '_task_id': task_id,
+            '_query': query,
+            '_upload_ts': upload_ts,
+        })
 
-            annotators[username]['total'] += 1
-            annotators[username][rec_review_status] += 1
-            annotators[username]['recordings'].append({
-                'folder_name': rec_name,
-                'task_id': task_id,
-                'query': query,
-                'upload_timestamp': upload_ts,
-                'review_status': rec_review_status,
-            })
+    result = {'annotators': annotators, 'folder': folder, '_timestamp': time.time()}
+    _dashboard_cache[folder] = result
+    return result
 
-        return jsonify({'annotators': annotators, 'folder': folder})
+
+@app.route('/api/oss/dashboard_data')
+def api_oss_dashboard_data():
+    """Aggregated per-annotator statistics for the dashboard. Uses server-side cache."""
+    folder = request.args.get('folder', 'recordings_0303')
+    refresh = request.args.get('refresh', '0') == '1'
+    try:
+        import time
+        cached = _dashboard_cache.get(folder)
+        # Use cache if <300s old and not forced refresh — but always refresh review statuses
+        if cached and not refresh and (time.time() - cached.get('_timestamp', 0)) < 300:
+            # Update review statuses from disk (cheap operation)
+            review_statuses = load_review_status()
+            for ann_data in cached.get('annotators', {}).values():
+                ann_data['reviewed'] = 0
+                ann_data['rejected'] = 0
+                ann_data['unreviewed'] = 0
+                for rec in ann_data.get('recordings', []):
+                    review_key = f"{folder}/{rec['folder_name']}"
+                    rec['review_status'] = review_statuses.get(review_key, 'unreviewed')
+                    ann_data[rec['review_status']] += 1
+                ann_data['total'] = len(ann_data['recordings'])
+            return jsonify({'annotators': cached['annotators'], 'folder': folder, 'cached': True})
+
+        result = _fetch_dashboard_data(folder)
+        return jsonify({'annotators': result['annotators'], 'folder': folder, 'cached': False})
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/oss/folder_recordings')
+def api_oss_folder_recordings():
+    """Return flat list of all recordings in a folder with review status. For the review-page sidebar."""
+    folder = request.args.get('folder', 'recordings_0303')
+    try:
+        cached = _dashboard_cache.get(folder)
+        if not cached:
+            cached = _fetch_dashboard_data(folder)
+
+        review_statuses = load_review_status()
+        recordings = []
+        for ann_data in cached.get('annotators', {}).values():
+            for rec in ann_data.get('recordings', []):
+                review_key = f"{folder}/{rec['folder_name']}"
+                recordings.append({
+                    'folder_name': rec['folder_name'],
+                    'task_id': rec.get('task_id', ''),
+                    'query': rec.get('query', ''),
+                    'username': rec.get('_username', ''),
+                    'review_status': review_statuses.get(review_key, 'unreviewed'),
+                })
+        return jsonify({'recordings': recordings, 'folder': folder})
+    except Exception as e:
+        return jsonify({'error': str(e), 'recordings': []})
+
+
 @app.route('/api/oss/task/<path:folder_name>')
 def api_oss_task(folder_name):
     """Load recording data for review from OSS."""
-    oss_folder = request.args.get('folder', 'recordings_new')
+    oss_folder = request.args.get('folder', 'recordings_0303')
     try:
         import oss_client
 
@@ -3882,7 +4150,7 @@ def oss_serve_frame(folder_name, video_time):
 
     if not video_file:
         # Try to download the video first
-        oss_folder = request.args.get('folder', 'recordings_new')
+        oss_folder = request.args.get('folder', 'recordings_0303')
         try:
             import oss_client
             prefix = oss_folder.rstrip('/') + '/' + folder_name
@@ -3916,7 +4184,7 @@ def api_oss_annotate():
     """Save full annotation for an OSS recording."""
     data = request.json
     folder_name = data.get('folder_name', '')
-    oss_folder = data.get('oss_folder', 'recordings_new')
+    oss_folder = data.get('oss_folder', 'recordings_0303')
     mark = data.get('mark')  # pass/fail/null
     scores = data.get('scores', {})
     pass_reason = data.get('pass_reason', '')
@@ -3956,7 +4224,7 @@ def api_oss_update_coordinate():
     """Save coordinate adjustment for an OSS recording step."""
     data = request.json
     folder_name = data.get('folder_name', '')
-    oss_folder = data.get('oss_folder', 'recordings_new')
+    oss_folder = data.get('oss_folder', 'recordings_0303')
     step_index = data.get('step_index')
     new_x = data.get('x')
     new_y = data.get('y')
@@ -3991,7 +4259,7 @@ def api_oss_review():
     """Save review status for a recording."""
     data = request.json
     folder_name = data.get('folder_name', '')
-    oss_folder = data.get('oss_folder', 'recordings_new')
+    oss_folder = data.get('oss_folder', 'recordings_0303')
     status = data.get('status', 'unreviewed')
 
     if status not in ('reviewed', 'rejected', 'unreviewed'):
