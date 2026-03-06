@@ -178,6 +178,13 @@ def load_task_data(task_id):
         # Only show coordinate marker for actions that have meaningful coordinates
         has_coordinate = action in ('click', 'drag') and (x != 0 or y != 0)
 
+        # Parse drag end coordinates
+        drag_to = None
+        if action == 'drag':
+            drag_match = re.search(r'Drag from \((\d+),\s*(\d+)\) to \((\d+),\s*(\d+)\)', description)
+            if drag_match:
+                drag_to = {'x': int(drag_match.group(3)), 'y': int(drag_match.group(4))}
+
         steps.append({
             'index': i,
             'action': action,
@@ -186,6 +193,7 @@ def load_task_data(task_id):
             'code': code,
             'coordinate': {'x': x, 'y': y},
             'has_coordinate': has_coordinate,
+            'drag_to': drag_to,
             'video_time': video_time
         })
 
@@ -355,6 +363,13 @@ def load_oss_task_data(local_dir):
         code = build_pyautogui_code(action, ce, description)
         has_coordinate = action in ('click', 'drag') and (x != 0 or y != 0)
 
+        # Parse drag end coordinates
+        drag_to = None
+        if action == 'drag':
+            match = re.search(r'Drag from \((\d+),\s*(\d+)\) to \((\d+),\s*(\d+)\)', description)
+            if match:
+                drag_to = {'x': int(match.group(3)), 'y': int(match.group(4))}
+
         steps.append({
             'index': i,
             'action': action,
@@ -363,6 +378,7 @@ def load_oss_task_data(local_dir):
             'code': code,
             'coordinate': {'x': x, 'y': y},
             'has_coordinate': has_coordinate,
+            'drag_to': drag_to,
             'video_time': video_time
         })
 
@@ -773,6 +789,20 @@ HTML_TEMPLATE = '''
             font-size: 11px;
             font-weight: bold;
             white-space: nowrap;
+        }
+        .coord-marker.drag-end {
+            border-color: #00c8ff;
+            box-shadow: 0 0 12px rgba(0, 200, 255, 0.5);
+        }
+        .coord-marker.drag-end::before {
+            background: #00c8ff;
+        }
+        .coord-marker.drag-end::after {
+            background: #00c8ff;
+        }
+        .drag-line {
+            pointer-events: none;
+            z-index: 10;
         }
         @keyframes pulse {
             0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
@@ -1385,7 +1415,17 @@ HTML_TEMPLATE = '''
                 <div class="image-container" id="image-container" style="max-width:${displayWidth}px"
                      onclick="handleImageClick(event)" data-scale="${scale}" data-width="${videoWidth}" data-height="${videoHeight}">
                     <img src="/frame/${currentTaskId}/${step.video_time}" style="width:100%">
-                    ${step.has_coordinate ? `<div class="coord-marker" id="coord-marker" style="left:${markerX}px;top:${markerY}px"
+                    ${step.has_coordinate && step.action === 'drag' && step.drag_to ? `
+                        <div class="coord-marker" id="coord-marker" style="left:${markerX}px;top:${markerY}px"
+                             data-label="from (${step.coordinate.x},${step.coordinate.y})"></div>
+                        <div class="coord-marker drag-end" id="coord-marker-end" style="left:${step.drag_to.x * scale}px;top:${step.drag_to.y * scale}px"
+                             data-label="to (${step.drag_to.x},${step.drag_to.y})"></div>
+                        <svg class="drag-line" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;">
+                            <line x1="${markerX}" y1="${markerY}" x2="${step.drag_to.x * scale}" y2="${step.drag_to.y * scale}"
+                                  stroke="#ff0040" stroke-width="2" stroke-dasharray="6,3" />
+                            <circle cx="${step.drag_to.x * scale}" cy="${step.drag_to.y * scale}" r="4" fill="#00c8ff" />
+                        </svg>
+                    ` : step.has_coordinate ? `<div class="coord-marker" id="coord-marker" style="left:${markerX}px;top:${markerY}px"
                          data-label="${step.action} (${step.coordinate.x},${step.coordinate.y})"></div>` : ''}
                 </div>
             `;
@@ -2914,7 +2954,7 @@ OSS_REVIEW_TEMPLATE = '''
             font-size: 0.85em;
         }
         .annotator-info-bar .info-item span { color: #888; }
-        .annotator-info-bar .info-item b { color: #ffc107; }
+        .annotator-info-bar .info-item b { color: #ffc107; word-break: break-word; }
 
         /* Screenshot */
         .screenshot-container {
@@ -2963,6 +3003,29 @@ OSS_REVIEW_TEMPLATE = '''
             font-size: 9px;
             font-weight: bold;
             white-space: nowrap;
+        }
+        .coord-marker.drag-end {
+            border-color: #00c8ff;
+            box-shadow: 0 0 12px rgba(0, 200, 255, 0.5);
+        }
+        .coord-marker.drag-end::before {
+            background: #00c8ff;
+        }
+        .coord-marker.drag-end::after {
+            background: #00c8ff;
+        }
+        .drag-line {
+            position: absolute;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .drag-line line {
+            stroke: #ff0040;
+            stroke-width: 2;
+            stroke-dasharray: 6, 3;
+        }
+        .drag-line polygon {
+            fill: #00c8ff;
         }
         @keyframes pulse {
             0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
@@ -3304,6 +3367,8 @@ OSS_REVIEW_TEMPLATE = '''
             <div class="screenshot-container" id="screenshotContainer" onclick="handleImageClick(event)">
                 <img id="screenshot" src="" alt="Screenshot" />
                 <div class="coord-marker" id="coordMarker" style="display:none;"></div>
+                <div class="coord-marker drag-end" id="coordMarkerEnd" style="display:none;"></div>
+                <svg class="drag-line" id="dragLine" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;"><line id="dragLinePath" /><polygon id="dragArrow" /></svg>
             </div>
 
             <div class="step-details" id="stepDetails"></div>
@@ -3518,7 +3583,7 @@ OSS_REVIEW_TEMPLATE = '''
                 let infoHtml = '';
                 if (info.username) infoHtml += '<div class="info-item"><span>Annotator:</span> <b>' + info.username + '</b></div>';
                 if (info.task_id) infoHtml += '<div class="info-item"><span>Task:</span> <b>' + info.task_id + '</b></div>';
-                if (info.query) infoHtml += '<div class="info-item"><span>Query:</span> <b>' + (info.query.length > 80 ? info.query.substring(0, 80) + '...' : info.query) + '</b></div>';
+                if (info.query) infoHtml += '<div class="info-item"><span>Query:</span> <b>' + info.query + '</b></div>';
                 document.getElementById('annotatorInfo').innerHTML = infoHtml || '<div class="info-item"><span>No annotator info</span></div>';
 
                 // Human-provided data section
@@ -3594,25 +3659,71 @@ OSS_REVIEW_TEMPLATE = '''
             const videoHeight = taskData.video_height || 1080;
 
             const img = document.getElementById('screenshot');
-            img.src = '/oss_frame/' + encodeURIComponent(folderName) + '/' + step.video_time + '?folder=' + encodeURIComponent(ossFolder);
-
             const marker = document.getElementById('coordMarker');
+            const markerEnd = document.getElementById('coordMarkerEnd');
+            const dragLine = document.getElementById('dragLine');
+
+            // Hide all markers by default
+            marker.style.display = 'none';
+            markerEnd.style.display = 'none';
+            dragLine.style.display = 'none';
+
             if (step.has_coordinate && step.coordinate) {
-                marker.setAttribute('data-label', step.action + ' (' + step.coordinate.x + ',' + step.coordinate.y + ')');
                 img.onload = function() {
                     const scaleX = img.clientWidth / videoWidth;
                     const scaleY = img.clientHeight / videoHeight;
-                    marker.style.left = (step.coordinate.x * scaleX) + 'px';
-                    marker.style.top = (step.coordinate.y * scaleY) + 'px';
-                    marker.style.display = 'block';
+
+                    if (step.action === 'drag' && step.drag_to) {
+                        // Drag: show start marker, end marker, and connecting line
+                        var sx = step.coordinate.x * scaleX;
+                        var sy = step.coordinate.y * scaleY;
+                        var ex = step.drag_to.x * scaleX;
+                        var ey = step.drag_to.y * scaleY;
+                        marker.setAttribute('data-label', 'from (' + step.coordinate.x + ',' + step.coordinate.y + ')');
+                        marker.style.left = sx + 'px';
+                        marker.style.top = sy + 'px';
+                        marker.style.display = 'block';
+                        markerEnd.setAttribute('data-label', 'to (' + step.drag_to.x + ',' + step.drag_to.y + ')');
+                        markerEnd.style.left = ex + 'px';
+                        markerEnd.style.top = ey + 'px';
+                        markerEnd.style.display = 'block';
+                        // Draw SVG line with arrow
+                        var linePath = document.getElementById('dragLinePath');
+                        var arrow = document.getElementById('dragArrow');
+                        linePath.setAttribute('x1', sx);
+                        linePath.setAttribute('y1', sy);
+                        linePath.setAttribute('x2', ex);
+                        linePath.setAttribute('y2', ey);
+                        // Arrowhead at end point
+                        var angle = Math.atan2(ey - sy, ex - sx);
+                        var aLen = 10;
+                        var ax1 = ex - aLen * Math.cos(angle - 0.4);
+                        var ay1 = ey - aLen * Math.sin(angle - 0.4);
+                        var ax2 = ex - aLen * Math.cos(angle + 0.4);
+                        var ay2 = ey - aLen * Math.sin(angle + 0.4);
+                        arrow.setAttribute('points', ex + ',' + ey + ' ' + ax1 + ',' + ay1 + ' ' + ax2 + ',' + ay2);
+                        dragLine.style.display = 'block';
+                    } else {
+                        // Click: single marker
+                        marker.setAttribute('data-label', step.action + ' (' + step.coordinate.x + ',' + step.coordinate.y + ')');
+                        marker.style.left = (step.coordinate.x * scaleX) + 'px';
+                        marker.style.top = (step.coordinate.y * scaleY) + 'px';
+                        marker.style.display = 'block';
+                    }
                     document.getElementById('imageInfoBar').innerHTML =
                         '<div class="image-info"><div class="resolution-info">' +
                         'Res: <b>' + videoWidth + 'x' + videoHeight + '</b> | Scale: <b>' + (scaleX * 100).toFixed(0) + '%</b></div></div>';
                 };
             } else {
-                marker.style.display = 'none';
-                document.getElementById('imageInfoBar').innerHTML = '';
+                img.onload = function() {
+                    document.getElementById('imageInfoBar').innerHTML =
+                        '<div class="image-info"><div class="resolution-info">' +
+                        'Res: <b>' + videoWidth + 'x' + videoHeight + '</b></div></div>';
+                };
             }
+
+            // Set src AFTER onload to handle cached images
+            img.src = '/oss_frame/' + encodeURIComponent(folderName) + '/' + step.video_time + '?folder=' + encodeURIComponent(ossFolder);
 
             // Step details
             let dHtml = '<h4>Step ' + idx + ': ' + (step.action || '');
