@@ -4736,9 +4736,13 @@ OSS_REVIEW_TEMPLATE = '''
                 html += '<button class="delete-step-btn" onclick="event.stopPropagation();confirmDeleteStep(' + idx + ')" title="Delete this step">Delete</button>';
                 html += '</div>';
 
-                // Screenshot with markers
+                // Resolution info
+                html += '<div class="image-info" id="stacked-info-' + idx + '" style="margin-bottom:4px;"><div class="resolution-info">Res: <b>' + videoWidth + ' x ' + videoHeight + '</b></div></div>';
+
+                // Screenshot with markers + drag lines
                 html += '<div class="stacked-img-container" id="stacked-img-' + idx + '" onclick="event.stopPropagation();handleStackedImageClick(event,' + idx + ')">';
                 html += '<img id="stacked-img-el-' + idx + '" src="' + imgUrl + '" data-idx="' + idx + '" />';
+                html += '<svg class="drag-line" id="stacked-drag-' + idx + '" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;"><line id="stacked-dragline-' + idx + '" /><polygon id="stacked-dragarrow-' + idx + '" /></svg>';
                 html += '</div>';
 
                 // Code
@@ -4802,21 +4806,57 @@ OSS_REVIEW_TEMPLATE = '''
             container.querySelectorAll('.coord-marker').forEach(m => m.remove());
             const scaleX = imgEl.clientWidth / videoWidth;
             const scaleY = imgEl.clientHeight / videoHeight;
+
+            // Update resolution info with scale if info bar exists
+            // containerId is like "stacked-img-3" -> info id is "stacked-info-3"
+            const infoId = containerId.replace('stacked-img-', 'stacked-info-');
+            const infoEl = document.getElementById(infoId);
+            if (infoEl) {
+                infoEl.innerHTML = '<div class="resolution-info">Res: <b>' + videoWidth + ' x ' + videoHeight + '</b> | Scale: <b>' + (scaleX * 100).toFixed(0) + '%</b></div>';
+            }
+
             if (step.action === 'drag' && step.drag_to) {
+                const sx = step.coordinate.x * scaleX;
+                const sy = step.coordinate.y * scaleY;
+                const ex = step.drag_to.x * scaleX;
+                const ey = step.drag_to.y * scaleY;
+                // Start marker
                 const m1 = document.createElement('div');
                 m1.className = 'coord-marker';
                 m1.setAttribute('data-label', 'from (' + step.coordinate.x + ',' + step.coordinate.y + ')');
-                m1.style.left = (step.coordinate.x * scaleX) + 'px';
-                m1.style.top = (step.coordinate.y * scaleY) + 'px';
+                m1.style.left = sx + 'px';
+                m1.style.top = sy + 'px';
                 m1.style.display = 'block';
                 container.appendChild(m1);
+                // End marker
                 const m2 = document.createElement('div');
                 m2.className = 'coord-marker drag-end';
                 m2.setAttribute('data-label', 'to (' + step.drag_to.x + ',' + step.drag_to.y + ')');
-                m2.style.left = (step.drag_to.x * scaleX) + 'px';
-                m2.style.top = (step.drag_to.y * scaleY) + 'px';
+                m2.style.left = ex + 'px';
+                m2.style.top = ey + 'px';
                 m2.style.display = 'block';
                 container.appendChild(m2);
+                // SVG drag line with arrow
+                const dragId = containerId.replace('stacked-img-', 'stacked-drag-');
+                const lineId = containerId.replace('stacked-img-', 'stacked-dragline-');
+                const arrowId = containerId.replace('stacked-img-', 'stacked-dragarrow-');
+                const dragSvg = document.getElementById(dragId);
+                const linePath = document.getElementById(lineId);
+                const arrow = document.getElementById(arrowId);
+                if (dragSvg && linePath && arrow) {
+                    linePath.setAttribute('x1', sx);
+                    linePath.setAttribute('y1', sy);
+                    linePath.setAttribute('x2', ex);
+                    linePath.setAttribute('y2', ey);
+                    const angle = Math.atan2(ey - sy, ex - sx);
+                    const aLen = 10;
+                    const ax1 = ex - aLen * Math.cos(angle - 0.4);
+                    const ay1 = ey - aLen * Math.sin(angle - 0.4);
+                    const ax2 = ex - aLen * Math.cos(angle + 0.4);
+                    const ay2 = ey - aLen * Math.sin(angle + 0.4);
+                    arrow.setAttribute('points', ex + ',' + ey + ' ' + ax1 + ',' + ay1 + ' ' + ax2 + ',' + ay2);
+                    dragSvg.style.display = 'block';
+                }
             } else {
                 const m = document.createElement('div');
                 m.className = 'coord-marker';
@@ -4825,6 +4865,10 @@ OSS_REVIEW_TEMPLATE = '''
                 m.style.top = (step.coordinate.y * scaleY) + 'px';
                 m.style.display = 'block';
                 container.appendChild(m);
+                // Hide drag line for non-drag actions
+                const dragId = containerId.replace('stacked-img-', 'stacked-drag-');
+                const dragSvg = document.getElementById(dragId);
+                if (dragSvg) dragSvg.style.display = 'none';
             }
         }
 
@@ -5110,8 +5154,10 @@ OSS_REVIEW_TEMPLATE = '''
 
             const imgUrl = '/oss_frame/' + encodeURIComponent(folderName) + '/' + step.video_time + '?folder=' + encodeURIComponent(ossFolder);
 
-            let html = '<div style="position:relative;display:inline-block;max-width:100%;background:#000;border-radius:6px;overflow:hidden;margin-bottom:10px;" id="detailImgContainer" onclick="handleDetailImageClick(event,' + idx + ')">';
+            let html = '<div class="image-info" id="detailResInfo"><div class="resolution-info">Res: <b>' + videoWidth + ' x ' + videoHeight + '</b></div></div>';
+            html += '<div style="position:relative;display:inline-block;max-width:100%;background:#000;border-radius:6px;overflow:hidden;margin-bottom:10px;" id="detailImgContainer" onclick="handleDetailImageClick(event,' + idx + ')">';
             html += '<img id="detailImg" src="' + imgUrl + '" style="max-width:100%;max-height:60vh;display:block;" />';
+            html += '<svg class="drag-line" id="detailDragSvg" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;"><line id="detailDragLine" /><polygon id="detailDragArrow" /></svg>';
             html += '</div>';
 
             html += '<div class="step-details" style="margin-bottom:10px;">';
@@ -5150,14 +5196,52 @@ OSS_REVIEW_TEMPLATE = '''
 
             document.getElementById('detailOverlayBody').innerHTML = html;
 
-            // Add markers using shared function
+            // Add markers + drag lines + update scale info
             const detailImg = document.getElementById('detailImg');
-            if (detailImg && step.has_coordinate && step.coordinate) {
-                const doMarkers = function() {
-                    addMarkersToContainer('detailImgContainer', detailImg, step, videoWidth, videoHeight);
-                };
-                if (detailImg.complete && detailImg.naturalWidth > 0) doMarkers();
-                else detailImg.onload = doMarkers;
+            const doDetailMarkers = function() {
+                const container = document.getElementById('detailImgContainer');
+                if (!container) return;
+                container.querySelectorAll('.coord-marker').forEach(m => m.remove());
+                const scaleX = detailImg.clientWidth / videoWidth;
+                const scaleY = detailImg.clientHeight / videoHeight;
+                // Update res info with scale
+                const resInfo = document.getElementById('detailResInfo');
+                if (resInfo) resInfo.innerHTML = '<div class="resolution-info">Res: <b>' + videoWidth + ' x ' + videoHeight + '</b> | Scale: <b>' + (scaleX * 100).toFixed(0) + '%</b></div>';
+                if (step.has_coordinate && step.coordinate) {
+                    if (step.action === 'drag' && step.drag_to) {
+                        const sx = step.coordinate.x * scaleX, sy = step.coordinate.y * scaleY;
+                        const ex = step.drag_to.x * scaleX, ey = step.drag_to.y * scaleY;
+                        const m1 = document.createElement('div'); m1.className = 'coord-marker';
+                        m1.setAttribute('data-label', 'from (' + step.coordinate.x + ',' + step.coordinate.y + ')');
+                        m1.style.left = sx + 'px'; m1.style.top = sy + 'px'; m1.style.display = 'block';
+                        container.appendChild(m1);
+                        const m2 = document.createElement('div'); m2.className = 'coord-marker drag-end';
+                        m2.setAttribute('data-label', 'to (' + step.drag_to.x + ',' + step.drag_to.y + ')');
+                        m2.style.left = ex + 'px'; m2.style.top = ey + 'px'; m2.style.display = 'block';
+                        container.appendChild(m2);
+                        const dSvg = document.getElementById('detailDragSvg');
+                        const dLine = document.getElementById('detailDragLine');
+                        const dArrow = document.getElementById('detailDragArrow');
+                        if (dSvg && dLine && dArrow) {
+                            dLine.setAttribute('x1', sx); dLine.setAttribute('y1', sy);
+                            dLine.setAttribute('x2', ex); dLine.setAttribute('y2', ey);
+                            const angle = Math.atan2(ey - sy, ex - sx), aLen = 10;
+                            dArrow.setAttribute('points', ex+','+ey+' '+(ex-aLen*Math.cos(angle-0.4))+','+(ey-aLen*Math.sin(angle-0.4))+' '+(ex-aLen*Math.cos(angle+0.4))+','+(ey-aLen*Math.sin(angle+0.4)));
+                            dSvg.style.display = 'block';
+                        }
+                    } else {
+                        const m = document.createElement('div'); m.className = 'coord-marker';
+                        m.setAttribute('data-label', step.action + ' (' + step.coordinate.x + ',' + step.coordinate.y + ')');
+                        m.style.left = (step.coordinate.x * scaleX) + 'px'; m.style.top = (step.coordinate.y * scaleY) + 'px';
+                        m.style.display = 'block'; container.appendChild(m);
+                        const dSvg = document.getElementById('detailDragSvg');
+                        if (dSvg) dSvg.style.display = 'none';
+                    }
+                }
+            };
+            if (detailImg) {
+                if (detailImg.complete && detailImg.naturalWidth > 0) doDetailMarkers();
+                else detailImg.onload = doDetailMarkers;
             }
         }
 
@@ -5178,8 +5262,15 @@ OSS_REVIEW_TEMPLATE = '''
             const y = parseInt(yInput.value) || 0;
             const videoWidth = taskData.video_width || 1920;
             const videoHeight = taskData.video_height || 1080;
-            const tempStep = Object.assign({}, step, { coordinate: { x, y } });
-            addMarkersToContainer('detailImgContainer', imgEl, tempStep, videoWidth, videoHeight);
+            const container = document.getElementById('detailImgContainer');
+            if (!container) return;
+            container.querySelectorAll('.coord-marker').forEach(m => m.remove());
+            const scaleX = imgEl.clientWidth / videoWidth;
+            const scaleY = imgEl.clientHeight / videoHeight;
+            const m = document.createElement('div'); m.className = 'coord-marker';
+            m.setAttribute('data-label', step.action + ' (' + x + ',' + y + ')');
+            m.style.left = (x * scaleX) + 'px'; m.style.top = (y * scaleY) + 'px';
+            m.style.display = 'block'; container.appendChild(m);
         }
 
         function handleDetailImageClick(event, idx) {
@@ -5238,13 +5329,7 @@ OSS_REVIEW_TEMPLATE = '''
 
         function cancelDetailFinetune(idx) {
             detailFinetuneActive = false;
-            const panel = document.getElementById('detail-finetune-panel');
-            if (panel) panel.classList.remove('show');
-            const step = taskData.steps[idx];
-            const imgEl = document.getElementById('detailImg');
-            if (step && imgEl) {
-                addMarkersToContainer('detailImgContainer', imgEl, step, taskData.video_width || 1920, taskData.video_height || 1080);
-            }
+            renderDetailOverlay(idx);
         }
 
         // ========== Annotation panels ==========
