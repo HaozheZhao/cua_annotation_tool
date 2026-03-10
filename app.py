@@ -3234,11 +3234,14 @@ OSS_REVIEW_TEMPLATE = '''
     <title>OSS Review - {{ folder_name }}</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #0f0f1a;
             color: #e0e0e0;
-            min-height: 100vh;
             display: flex;
             flex-direction: column;
         }
@@ -3446,10 +3449,12 @@ OSS_REVIEW_TEMPLATE = '''
         /* Step sidebar */
         .step-sidebar {
             width: 180px;
+            min-width: 180px;
             background: #16213e;
             overflow-y: auto;
             padding: 8px;
             border-right: 1px solid #333;
+            flex-shrink: 0;
         }
         .step-sidebar-header {
             padding: 6px 8px;
