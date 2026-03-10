@@ -3832,17 +3832,53 @@ OSS_REVIEW_TEMPLATE = '''
             background: #0d1117; color: #e0e0e0; font-size: 0.8em; margin-left: 8px;
         }
 
+        /* Stacked single view (all steps listed) */
+        .steps-stacked {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .stacked-step-card {
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-radius: 10px;
+            overflow: hidden;
+            padding: 16px;
+            transition: border-color 0.2s;
+        }
+        .stacked-step-card:hover { border-color: #555; }
+        .stacked-step-card.active { border-color: #00d9ff; box-shadow: 0 0 10px rgba(0,217,255,0.15); }
+        .stacked-step-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 10px;
+        }
+        .stacked-step-header h4 { color: #00d9ff; margin: 0; font-size: 1em; }
+        .stacked-img-container {
+            position: relative;
+            display: inline-block;
+            background: #000;
+            border-radius: 6px;
+            overflow: hidden;
+            max-width: 100%;
+            margin-bottom: 10px;
+        }
+        .stacked-img-container img {
+            max-width: 100%;
+            max-height: 55vh;
+            display: block;
+        }
+
         /* Grid view */
         .steps-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-            gap: 12px;
+            grid-template-columns: repeat(auto-fill, minmax(560px, 1fr));
+            gap: 16px;
             margin-bottom: 16px;
         }
         .grid-card {
             background: #1a1a2e;
             border: 1px solid #333;
-            border-radius: 8px;
+            border-radius: 10px;
             overflow: hidden;
             transition: all 0.2s;
             cursor: pointer;
@@ -3879,28 +3915,28 @@ OSS_REVIEW_TEMPLATE = '''
         }
         .grid-card-img .grid-marker.drag-end { border-color: #00c8ff; box-shadow: 0 0 8px rgba(0,200,255,0.5); }
         .grid-card-img .grid-marker.drag-end::before { background: #00c8ff; }
-        .grid-card-body { padding: 8px 10px; }
+        .grid-card-body { padding: 10px 14px; }
         .grid-card-header {
             display: flex; justify-content: space-between; align-items: center;
-            margin-bottom: 4px;
+            margin-bottom: 6px;
         }
         .grid-card-step {
-            color: #00d9ff; font-weight: bold; font-size: 0.85em;
+            color: #00d9ff; font-weight: bold; font-size: 0.95em;
         }
         .grid-card-action {
-            background: #252542; padding: 2px 8px; border-radius: 10px;
-            font-size: 0.72em; color: #ccc;
+            background: #252542; padding: 3px 10px; border-radius: 10px;
+            font-size: 0.82em; color: #ccc;
         }
         .grid-card-code {
-            background: #0d1117; padding: 4px 6px; border-radius: 3px;
-            font-family: monospace; font-size: 0.72em; color: #7ee787;
+            background: #0d1117; padding: 5px 8px; border-radius: 4px;
+            font-family: monospace; font-size: 0.82em; color: #7ee787;
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-            margin-bottom: 4px;
+            margin-bottom: 6px;
         }
         .grid-card-justification {
-            color: #ffc107; font-size: 0.72em;
-            border-left: 2px solid #ffc107; padding-left: 6px;
-            max-height: 36px; overflow: hidden; text-overflow: ellipsis;
+            color: #ffc107; font-size: 0.82em;
+            border-left: 2px solid #ffc107; padding-left: 8px;
+            max-height: 48px; overflow: hidden; text-overflow: ellipsis;
         }
         .grid-card-badges { display: flex; gap: 4px; margin-top: 4px; }
         .grid-card-badges .badge {
@@ -4001,14 +4037,14 @@ OSS_REVIEW_TEMPLATE = '''
 
         /* Editable query */
         .query-edit-input {
-            padding: 4px 8px;
+            padding: 6px 10px;
             border: 1px solid #444; border-radius: 4px;
             background: #0d1117; color: #ffc107;
-            font-family: inherit; font-size: 0.85em;
-            resize: vertical; min-height: 28px; width: 300px;
+            font-family: inherit; font-size: 0.9em;
+            resize: vertical; min-height: 60px; width: 100%;
         }
         .query-edit-input:focus { border-color: #00d9ff; outline: none; }
-        .info-item-query { flex: 1; min-width: 200px; }
+        .info-item-query { flex: 2; min-width: 400px; }
 
         /* Delete step button */
         .delete-step-btn {
@@ -4279,9 +4315,9 @@ OSS_REVIEW_TEMPLATE = '''
             <div id="humanDataSection"></div>
 
             <div class="nav-buttons">
-                <button class="nav-btn" id="prevBtn" onclick="prevStep()">Prev</button>
+                <button class="nav-btn" id="prevBtn" onclick="prevStep()" style="display:none;">Prev</button>
                 <span class="step-counter" id="stepCounter">Step 0 / 0</span>
-                <button class="nav-btn" id="nextBtn" onclick="nextStep()">Next</button>
+                <button class="nav-btn" id="nextBtn" onclick="nextStep()" style="display:none;">Next</button>
                 <div class="view-toggle">
                     <button id="viewSingle" class="active" onclick="setViewMode('single')">Single</button>
                     <button id="viewGrid" onclick="setViewMode('grid')">Grid</button>
@@ -4295,19 +4331,9 @@ OSS_REVIEW_TEMPLATE = '''
                 </select>
             </div>
 
-            <!-- Single step view (default) -->
+            <!-- Single step view (all steps stacked) -->
             <div id="singleStepView">
-                <div id="coordAdjustPanel"></div>
-                <div id="imageInfoBar"></div>
-
-                <div class="screenshot-container" id="screenshotContainer" onclick="handleImageClick(event)">
-                    <img id="screenshot" src="" alt="Screenshot" />
-                    <div class="coord-marker" id="coordMarker" style="display:none;"></div>
-                    <div class="coord-marker drag-end" id="coordMarkerEnd" style="display:none;"></div>
-                    <svg class="drag-line" id="dragLine" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;"><line id="dragLinePath" /><polygon id="dragArrow" /></svg>
-                </div>
-
-                <div class="step-details" id="stepDetails"></div>
+                <div class="steps-stacked" id="stepsStacked"></div>
             </div>
 
             <!-- Grid view (all steps) -->
@@ -4649,145 +4675,260 @@ OSS_REVIEW_TEMPLATE = '''
 
         function selectStep(idx) {
             currentStep = idx;
-            finetuneActive = false;
-            renderStep(idx);
+            document.getElementById('stepCounter').textContent = 'Step ' + idx + ' / ' + ((taskData.steps || []).length - 1);
             document.querySelectorAll('.step-item').forEach((el, i) => {
                 el.classList.toggle('active', i === idx);
             });
+            if (viewMode === 'single') {
+                // Scroll to the step in stacked view
+                const card = document.getElementById('stacked-step-' + idx);
+                if (card) {
+                    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    document.querySelectorAll('.stacked-step-card').forEach(c => c.classList.remove('active'));
+                    card.classList.add('active');
+                }
+            }
         }
 
-        // ========== Render step ==========
+        // ========== Render step (stacked all steps) ==========
 
         function renderStep(idx) {
-            const steps = taskData.steps || [];
-            if (idx < 0 || idx >= steps.length) return;
-            const step = steps[idx];
+            // Render ALL steps in stacked view
+            renderAllStepsStacked();
+            // Scroll to the specified step
             currentStep = idx;
+            document.getElementById('stepCounter').textContent = 'Step ' + idx + ' / ' + ((taskData.steps || []).length - 1);
+            const targetCard = document.getElementById('stacked-step-' + idx);
+            if (targetCard) {
+                targetCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                document.querySelectorAll('.stacked-step-card').forEach(c => c.classList.remove('active'));
+                targetCard.classList.add('active');
+            }
+            renderAnnotationPanels();
+        }
 
-            document.getElementById('stepCounter').textContent = 'Step ' + idx + ' / ' + (steps.length - 1);
-            document.getElementById('prevBtn').disabled = idx <= 0;
-            document.getElementById('nextBtn').disabled = idx >= steps.length - 1;
-
-            const origIdx = step.original_index != null ? step.original_index : idx;
-            const adj = coordAdjustments[String(origIdx)];
-            const isAdjusted = !!adj;
-            const origCoord = isAdjusted ? (adj.original || step.coordinate) : step.coordinate;
+        function renderAllStepsStacked() {
+            const steps = taskData.steps || [];
             const videoWidth = taskData.video_width || 1920;
             const videoHeight = taskData.video_height || 1080;
+            const container = document.getElementById('stepsStacked');
+            if (!container) return;
 
-            const img = document.getElementById('screenshot');
-            const marker = document.getElementById('coordMarker');
-            const markerEnd = document.getElementById('coordMarkerEnd');
-            const dragLine = document.getElementById('dragLine');
+            let html = '';
+            steps.forEach((step, idx) => {
+                const origIdx = step.original_index != null ? step.original_index : idx;
+                const adj = coordAdjustments[String(origIdx)];
+                const isAdjusted = !!adj;
+                const origCoord = isAdjusted ? (adj.original || step.coordinate) : step.coordinate;
+                const imgUrl = '/oss_frame/' + encodeURIComponent(folderName) + '/' + step.video_time + '?folder=' + encodeURIComponent(ossFolder);
 
-            // Hide all markers by default
-            marker.style.display = 'none';
-            markerEnd.style.display = 'none';
-            dragLine.style.display = 'none';
+                html += '<div class="stacked-step-card" id="stacked-step-' + idx + '" onclick="onStackedStepClick(' + idx + ')">';
 
-            if (step.has_coordinate && step.coordinate) {
-                img.onload = function() {
-                    const scaleX = img.clientWidth / videoWidth;
-                    const scaleY = img.clientHeight / videoHeight;
+                // Header
+                html += '<div class="stacked-step-header"><h4>Step ' + idx + ': ' + (step.action || '');
+                if (isAdjusted) html += ' <span class="adjusted-badge">Adjusted</span>';
+                html += '</h4>';
+                html += '<button class="delete-step-btn" onclick="event.stopPropagation();confirmDeleteStep(' + idx + ')" title="Delete this step">Delete</button>';
+                html += '</div>';
 
-                    if (step.action === 'drag' && step.drag_to) {
-                        // Drag: show start marker, end marker, and connecting line
-                        var sx = step.coordinate.x * scaleX;
-                        var sy = step.coordinate.y * scaleY;
-                        var ex = step.drag_to.x * scaleX;
-                        var ey = step.drag_to.y * scaleY;
-                        marker.setAttribute('data-label', 'from (' + step.coordinate.x + ',' + step.coordinate.y + ')');
-                        marker.style.left = sx + 'px';
-                        marker.style.top = sy + 'px';
-                        marker.style.display = 'block';
-                        markerEnd.setAttribute('data-label', 'to (' + step.drag_to.x + ',' + step.drag_to.y + ')');
-                        markerEnd.style.left = ex + 'px';
-                        markerEnd.style.top = ey + 'px';
-                        markerEnd.style.display = 'block';
-                        // Draw SVG line with arrow
-                        var linePath = document.getElementById('dragLinePath');
-                        var arrow = document.getElementById('dragArrow');
-                        linePath.setAttribute('x1', sx);
-                        linePath.setAttribute('y1', sy);
-                        linePath.setAttribute('x2', ex);
-                        linePath.setAttribute('y2', ey);
-                        // Arrowhead at end point
-                        var angle = Math.atan2(ey - sy, ex - sx);
-                        var aLen = 10;
-                        var ax1 = ex - aLen * Math.cos(angle - 0.4);
-                        var ay1 = ey - aLen * Math.sin(angle - 0.4);
-                        var ax2 = ex - aLen * Math.cos(angle + 0.4);
-                        var ay2 = ey - aLen * Math.sin(angle + 0.4);
-                        arrow.setAttribute('points', ex + ',' + ey + ' ' + ax1 + ',' + ay1 + ' ' + ax2 + ',' + ay2);
-                        dragLine.style.display = 'block';
+                // Screenshot with markers
+                html += '<div class="stacked-img-container" id="stacked-img-' + idx + '" onclick="event.stopPropagation();handleStackedImageClick(event,' + idx + ')">';
+                html += '<img id="stacked-img-el-' + idx + '" src="' + imgUrl + '" data-idx="' + idx + '" />';
+                html += '</div>';
+
+                // Code
+                html += '<div class="code">' + (step.code || '') + '</div>';
+
+                // Coordinate with fine-tune
+                if (step.has_coordinate) {
+                    html += '<div style="margin-bottom:6px;font-size:0.85em;">';
+                    if (isAdjusted) {
+                        html += 'Coord: <span class="current-coord" id="stacked-coord-' + idx + '">(' + step.coordinate.x + ', ' + step.coordinate.y + ')</span>';
+                        html += '<span class="original-coord">(' + origCoord.x + ', ' + origCoord.y + ')</span>';
                     } else {
-                        // Click: single marker
-                        marker.setAttribute('data-label', step.action + ' (' + step.coordinate.x + ',' + step.coordinate.y + ')');
-                        marker.style.left = (step.coordinate.x * scaleX) + 'px';
-                        marker.style.top = (step.coordinate.y * scaleY) + 'px';
-                        marker.style.display = 'block';
+                        html += 'Coord: <span id="stacked-coord-' + idx + '">(' + step.coordinate.x + ', ' + step.coordinate.y + ')</span>';
                     }
-                    document.getElementById('imageInfoBar').innerHTML =
-                        '<div class="image-info"><div class="resolution-info">' +
-                        'Res: <b>' + videoWidth + 'x' + videoHeight + '</b> | Scale: <b>' + (scaleX * 100).toFixed(0) + '%</b></div></div>';
-                };
-            } else {
-                img.onload = function() {
-                    document.getElementById('imageInfoBar').innerHTML =
-                        '<div class="image-info"><div class="resolution-info">' +
-                        'Res: <b>' + videoWidth + 'x' + videoHeight + '</b></div></div>';
-                };
-            }
-
-            // Set src AFTER onload to handle cached images
-            img.src = '/oss_frame/' + encodeURIComponent(folderName) + '/' + step.video_time + '?folder=' + encodeURIComponent(ossFolder);
-
-            // Step details
-            let dHtml = '<h4>Step ' + idx + ': ' + (step.action || '');
-            if (isAdjusted) dHtml += ' <span class="adjusted-badge">Adjusted</span>';
-            dHtml += ' <button class="delete-step-btn" onclick="confirmDeleteStep(' + idx + ')" title="Delete this step">Delete Step</button>';
-            dHtml += '</h4>';
-            dHtml += '<div class="code"><span id="action-code-display">' + (step.code || '') + '</span></div>';
-            if (step.has_coordinate) {
-                dHtml += '<div style="margin-bottom:6px;font-size:0.85em;">';
-                if (isAdjusted) {
-                    dHtml += 'Coord: <span class="current-coord" id="coord-display">(' + step.coordinate.x + ', ' + step.coordinate.y + ')</span>';
-                    dHtml += '<span class="original-coord">(' + origCoord.x + ', ' + origCoord.y + ')</span>';
-                } else {
-                    dHtml += 'Coord: <span id="coord-display">(' + step.coordinate.x + ', ' + step.coordinate.y + ')</span>';
+                    html += ' <button class="finetune-btn" onclick="event.stopPropagation();toggleStackedFinetune(' + idx + ')">Fine-tune</button></div>';
+                    // Finetune panel (hidden by default)
+                    html += '<div class="coord-adjust-panel" id="stacked-finetune-' + idx + '">';
+                    html += '<h5>Coordinate Fine-tuning</h5>';
+                    html += '<div class="coord-adjust-controls">';
+                    html += '<div class="coord-field"><label>X:</label><input type="number" class="coord-input" id="stacked-cx-' + idx + '" value="' + step.coordinate.x + '" min="0" max="' + videoWidth + '" oninput="updateStackedMarker(' + idx + ')"></div>';
+                    html += '<div class="coord-field"><label>Y:</label><input type="number" class="coord-input" id="stacked-cy-' + idx + '" value="' + step.coordinate.y + '" min="0" max="' + videoHeight + '" oninput="updateStackedMarker(' + idx + ')"></div>';
+                    html += '<button class="finetune-btn save" onclick="event.stopPropagation();saveStackedCoordinate(' + idx + ')">Save</button>';
+                    html += '<button class="finetune-btn cancel" onclick="event.stopPropagation();cancelStackedFinetune(' + idx + ')">Cancel</button>';
+                    html += '<span style="color:#888;font-size:0.75em;margin-left:8px;">Click image to set</span>';
+                    html += '</div></div>';
                 }
-                dHtml += ' <button class="finetune-btn" onclick="toggleFinetune()">Fine-tune</button></div>';
-            }
-            if (step.description) dHtml += '<div class="description">' + step.description + '</div>';
-            // Editable justification
-            dHtml += '<div class="justification-edit-area">';
-            dHtml += '<label style="color:#888;font-size:0.78em;display:block;margin-bottom:3px;">Justification:</label>';
-            dHtml += '<textarea class="justification-input" id="justification-edit" onchange="saveJustification(' + idx + ', this.value)" placeholder="Step justification...">' + (step.justification || '') + '</textarea>';
-            dHtml += '</div>';
-            // AI check results
-            dHtml += renderAiResultHtml(origIdx);
-            document.getElementById('stepDetails').innerHTML = dHtml;
 
-            // Coord finetune panel
-            if (step.has_coordinate) {
-                document.getElementById('coordAdjustPanel').innerHTML =
-                    '<div class="coord-adjust-panel' + (finetuneActive ? ' show' : '') + '" id="finetune-panel">' +
-                    '<h5>Coordinate Fine-tuning</h5>' +
-                    '<div class="coord-adjust-controls">' +
-                    '<div class="coord-field"><label>X:</label><input type="number" class="coord-input" id="coord-x" value="' + step.coordinate.x + '" min="0" max="' + videoWidth + '" oninput="updateMarkerPreview()"></div>' +
-                    '<div class="coord-field"><label>Y:</label><input type="number" class="coord-input" id="coord-y" value="' + step.coordinate.y + '" min="0" max="' + videoHeight + '" oninput="updateMarkerPreview()"></div>' +
-                    '<button class="finetune-btn save" onclick="saveCoordinate()">Save</button>' +
-                    '<button class="finetune-btn cancel" onclick="cancelFinetune()">Cancel</button>' +
-                    '<span style="color:#888;font-size:0.75em;margin-left:8px;">Click image to set</span>' +
-                    '</div></div>';
+                // Description
+                if (step.description) html += '<div class="description">' + step.description + '</div>';
+
+                // Justification
+                html += '<div class="justification-edit-area">';
+                html += '<label style="color:#888;font-size:0.78em;display:block;margin-bottom:3px;">Justification:</label>';
+                html += '<textarea class="justification-input" onchange="saveJustification(' + idx + ', this.value)" placeholder="Step justification...">' + (step.justification || '') + '</textarea>';
+                html += '</div>';
+
+                // AI check
+                html += renderAiResultHtml(origIdx);
+
+                html += '</div>';
+            });
+
+            container.innerHTML = html;
+
+            // Add coordinate markers after images load
+            steps.forEach((step, idx) => {
+                if (!step.has_coordinate || !step.coordinate) return;
+                const imgEl = document.getElementById('stacked-img-el-' + idx);
+                if (!imgEl) return;
+                const addMarkers = function() {
+                    addMarkersToContainer('stacked-img-' + idx, imgEl, step, videoWidth, videoHeight);
+                };
+                if (imgEl.complete && imgEl.naturalWidth > 0) addMarkers();
+                else imgEl.onload = addMarkers;
+            });
+        }
+
+        function addMarkersToContainer(containerId, imgEl, step, videoWidth, videoHeight) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            container.querySelectorAll('.coord-marker').forEach(m => m.remove());
+            const scaleX = imgEl.clientWidth / videoWidth;
+            const scaleY = imgEl.clientHeight / videoHeight;
+            if (step.action === 'drag' && step.drag_to) {
+                const m1 = document.createElement('div');
+                m1.className = 'coord-marker';
+                m1.setAttribute('data-label', 'from (' + step.coordinate.x + ',' + step.coordinate.y + ')');
+                m1.style.left = (step.coordinate.x * scaleX) + 'px';
+                m1.style.top = (step.coordinate.y * scaleY) + 'px';
+                m1.style.display = 'block';
+                container.appendChild(m1);
+                const m2 = document.createElement('div');
+                m2.className = 'coord-marker drag-end';
+                m2.setAttribute('data-label', 'to (' + step.drag_to.x + ',' + step.drag_to.y + ')');
+                m2.style.left = (step.drag_to.x * scaleX) + 'px';
+                m2.style.top = (step.drag_to.y * scaleY) + 'px';
+                m2.style.display = 'block';
+                container.appendChild(m2);
             } else {
-                document.getElementById('coordAdjustPanel').innerHTML = '';
+                const m = document.createElement('div');
+                m.className = 'coord-marker';
+                m.setAttribute('data-label', step.action + ' (' + step.coordinate.x + ',' + step.coordinate.y + ')');
+                m.style.left = (step.coordinate.x * scaleX) + 'px';
+                m.style.top = (step.coordinate.y * scaleY) + 'px';
+                m.style.display = 'block';
+                container.appendChild(m);
             }
+        }
 
-            window._origCoords = { x: step.coordinate.x, y: step.coordinate.y };
-            window._videoDims = { width: videoWidth, height: videoHeight };
+        function onStackedStepClick(idx) {
+            currentStep = idx;
+            document.querySelectorAll('.stacked-step-card').forEach(c => c.classList.remove('active'));
+            document.getElementById('stacked-step-' + idx).classList.add('active');
+            document.querySelectorAll('.step-item').forEach((el, i) => el.classList.toggle('active', i === idx));
+            document.getElementById('stepCounter').textContent = 'Step ' + idx + ' / ' + ((taskData.steps || []).length - 1);
+        }
 
-            renderAnnotationPanels();
+        // Stacked view coordinate fine-tuning
+        let stackedFinetuneIdx = null;
+
+        function toggleStackedFinetune(idx) {
+            const panel = document.getElementById('stacked-finetune-' + idx);
+            if (!panel) return;
+            if (stackedFinetuneIdx === idx) {
+                panel.classList.remove('show');
+                stackedFinetuneIdx = null;
+            } else {
+                // Close any other open panel
+                if (stackedFinetuneIdx !== null) {
+                    const prev = document.getElementById('stacked-finetune-' + stackedFinetuneIdx);
+                    if (prev) prev.classList.remove('show');
+                }
+                panel.classList.add('show');
+                stackedFinetuneIdx = idx;
+            }
+        }
+
+        function updateStackedMarker(idx) {
+            const step = taskData.steps[idx];
+            const xInput = document.getElementById('stacked-cx-' + idx);
+            const yInput = document.getElementById('stacked-cy-' + idx);
+            const imgEl = document.getElementById('stacked-img-el-' + idx);
+            if (!xInput || !yInput || !imgEl) return;
+            const x = parseInt(xInput.value) || 0;
+            const y = parseInt(yInput.value) || 0;
+            const videoWidth = taskData.video_width || 1920;
+            const videoHeight = taskData.video_height || 1080;
+            // Update marker with temp coordinate
+            const tempStep = Object.assign({}, step, { coordinate: { x, y } });
+            addMarkersToContainer('stacked-img-' + idx, imgEl, tempStep, videoWidth, videoHeight);
+        }
+
+        async function saveStackedCoordinate(idx) {
+            const step = taskData.steps[idx];
+            const xInput = document.getElementById('stacked-cx-' + idx);
+            const yInput = document.getElementById('stacked-cy-' + idx);
+            if (!xInput || !yInput) return;
+            const x = parseInt(xInput.value) || 0;
+            const y = parseInt(yInput.value) || 0;
+            const origIdx = step.original_index != null ? step.original_index : idx;
+            const adj = coordAdjustments[String(origIdx)];
+            let origX, origY;
+            if (adj && adj.original) { origX = adj.original.x; origY = adj.original.y; }
+            else { origX = step.coordinate.x; origY = step.coordinate.y; }
+
+            await fetch('/api/oss/update_coordinate', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    folder_name: folderName, oss_folder: ossFolder,
+                    step_index: origIdx, x: x, y: y,
+                    original_x: origX, original_y: origY
+                })
+            });
+            coordAdjustments[String(origIdx)] = { x: x, y: y, original: { x: origX, y: origY } };
+            step.coordinate = { x: x, y: y };
+            if (step.action === 'click') {
+                if (step.code.includes('doubleClick')) step.code = 'pyautogui.doubleClick(' + x + ', ' + y + ')';
+                else if (step.code.includes('rightClick')) step.code = 'pyautogui.rightClick(' + x + ', ' + y + ')';
+                else if (step.code.includes('clicks=3')) step.code = 'pyautogui.click(' + x + ', ' + y + ', clicks=3)';
+                else step.code = 'pyautogui.click(' + x + ', ' + y + ')';
+            }
+            stackedFinetuneIdx = null;
+            renderAllStepsStacked();
+            renderStepSidebar();
+        }
+
+        function cancelStackedFinetune(idx) {
+            const panel = document.getElementById('stacked-finetune-' + idx);
+            if (panel) panel.classList.remove('show');
+            stackedFinetuneIdx = null;
+            // Restore original marker
+            const step = taskData.steps[idx];
+            const imgEl = document.getElementById('stacked-img-el-' + idx);
+            if (step && imgEl) {
+                addMarkersToContainer('stacked-img-' + idx, imgEl, step, taskData.video_width || 1920, taskData.video_height || 1080);
+            }
+        }
+
+        function handleStackedImageClick(event, idx) {
+            if (stackedFinetuneIdx !== idx) return;
+            const imgEl = document.getElementById('stacked-img-el-' + idx);
+            if (!imgEl) return;
+            const rect = imgEl.getBoundingClientRect();
+            const videoWidth = taskData.video_width || 1920;
+            const videoHeight = taskData.video_height || 1080;
+            const scaleX = imgEl.clientWidth / videoWidth;
+            const scaleY = imgEl.clientHeight / videoHeight;
+            const x = Math.round((event.clientX - rect.left) / scaleX);
+            const y = Math.round((event.clientY - rect.top) / scaleY);
+            const xInput = document.getElementById('stacked-cx-' + idx);
+            const yInput = document.getElementById('stacked-cy-' + idx);
+            if (xInput) xInput.value = x;
+            if (yInput) yInput.value = y;
+            updateStackedMarker(idx);
         }
 
         // ========== View mode: single / grid ==========
@@ -4798,12 +4939,14 @@ OSS_REVIEW_TEMPLATE = '''
             document.getElementById('viewGrid').classList.toggle('active', mode === 'grid');
             document.getElementById('singleStepView').style.display = mode === 'single' ? '' : 'none';
             document.getElementById('gridStepView').style.display = mode === 'grid' ? '' : 'none';
-            // Show/hide single-step nav buttons in single mode
-            document.getElementById('prevBtn').style.display = mode === 'single' ? '' : 'none';
-            document.getElementById('nextBtn').style.display = mode === 'single' ? '' : 'none';
+            // Hide prev/next in both modes (stacked view scrolls, grid has pagination)
+            document.getElementById('prevBtn').style.display = 'none';
+            document.getElementById('nextBtn').style.display = 'none';
             document.getElementById('stepCounter').style.display = mode === 'single' ? '' : 'none';
             document.getElementById('pageSizeSelect').style.display = mode === 'grid' ? '' : 'none';
-            if (mode === 'grid') {
+            if (mode === 'single') {
+                renderAllStepsStacked();
+            } else if (mode === 'grid') {
                 gridPage = 0;
                 renderGrid();
             }
@@ -4942,6 +5085,8 @@ OSS_REVIEW_TEMPLATE = '''
             if (detailStepIdx < steps.length - 1) { detailStepIdx++; renderDetailOverlay(detailStepIdx); }
         }
 
+        let detailFinetuneActive = false;
+
         function renderDetailOverlay(idx) {
             const steps = taskData ? taskData.steps || [] : [];
             if (idx < 0 || idx >= steps.length) return;
@@ -4949,8 +5094,10 @@ OSS_REVIEW_TEMPLATE = '''
             const origIdx = step.original_index != null ? step.original_index : idx;
             const adj = coordAdjustments[String(origIdx)];
             const isAdjusted = !!adj;
+            const origCoord = isAdjusted ? (adj.original || step.coordinate) : step.coordinate;
             const videoWidth = taskData.video_width || 1920;
             const videoHeight = taskData.video_height || 1080;
+            detailFinetuneActive = false;
 
             document.getElementById('detailOverlayTitle').textContent = 'Step ' + idx + ': ' + (step.action || '');
             document.getElementById('detailPrevBtn').disabled = idx <= 0;
@@ -4958,7 +5105,7 @@ OSS_REVIEW_TEMPLATE = '''
 
             const imgUrl = '/oss_frame/' + encodeURIComponent(folderName) + '/' + step.video_time + '?folder=' + encodeURIComponent(ossFolder);
 
-            let html = '<div style="position:relative;display:inline-block;max-width:100%;background:#000;border-radius:6px;overflow:hidden;margin-bottom:10px;" id="detailImgContainer">';
+            let html = '<div style="position:relative;display:inline-block;max-width:100%;background:#000;border-radius:6px;overflow:hidden;margin-bottom:10px;" id="detailImgContainer" onclick="handleDetailImageClick(event,' + idx + ')">';
             html += '<img id="detailImg" src="' + imgUrl + '" style="max-width:100%;max-height:60vh;display:block;" />';
             html += '</div>';
 
@@ -4969,59 +5116,129 @@ OSS_REVIEW_TEMPLATE = '''
             html += '</h4>';
             html += '<div class="code">' + (step.code || '') + '</div>';
             if (step.has_coordinate) {
-                html += '<div style="margin-bottom:6px;font-size:0.85em;">Coord: (' + step.coordinate.x + ', ' + step.coordinate.y + ')';
+                html += '<div style="margin-bottom:6px;font-size:0.85em;">';
                 if (isAdjusted) {
-                    const orig = adj.original || step.coordinate;
-                    html += ' <span class="original-coord">(' + orig.x + ', ' + orig.y + ')</span>';
+                    html += 'Coord: <span class="current-coord" id="detail-coord-display">(' + step.coordinate.x + ', ' + step.coordinate.y + ')</span>';
+                    html += '<span class="original-coord">(' + origCoord.x + ', ' + origCoord.y + ')</span>';
+                } else {
+                    html += 'Coord: <span id="detail-coord-display">(' + step.coordinate.x + ', ' + step.coordinate.y + ')</span>';
                 }
-                html += '</div>';
+                html += ' <button class="finetune-btn" onclick="toggleDetailFinetune(' + idx + ')">Fine-tune</button></div>';
+                // Finetune panel
+                html += '<div class="coord-adjust-panel" id="detail-finetune-panel">';
+                html += '<h5>Coordinate Fine-tuning</h5>';
+                html += '<div class="coord-adjust-controls">';
+                html += '<div class="coord-field"><label>X:</label><input type="number" class="coord-input" id="detail-cx" value="' + step.coordinate.x + '" min="0" max="' + videoWidth + '" oninput="updateDetailMarker(' + idx + ')"></div>';
+                html += '<div class="coord-field"><label>Y:</label><input type="number" class="coord-input" id="detail-cy" value="' + step.coordinate.y + '" min="0" max="' + videoHeight + '" oninput="updateDetailMarker(' + idx + ')"></div>';
+                html += '<button class="finetune-btn save" onclick="saveDetailCoordinate(' + idx + ')">Save</button>';
+                html += '<button class="finetune-btn cancel" onclick="cancelDetailFinetune(' + idx + ')">Cancel</button>';
+                html += '<span style="color:#888;font-size:0.75em;margin-left:8px;">Click image to set</span>';
+                html += '</div></div>';
             }
             if (step.description) html += '<div class="description">' + step.description + '</div>';
             html += '<div class="justification-edit-area">';
             html += '<label style="color:#888;font-size:0.78em;display:block;margin-bottom:3px;">Justification:</label>';
             html += '<textarea class="justification-input" onchange="saveJustification(' + idx + ', this.value)" placeholder="Step justification...">' + (step.justification || '') + '</textarea>';
             html += '</div>';
-            // AI check results in detail overlay
             html += renderAiResultHtml(origIdx);
             html += '</div>';
 
             document.getElementById('detailOverlayBody').innerHTML = html;
 
-            // Add markers to detail image
+            // Add markers using shared function
             const detailImg = document.getElementById('detailImg');
             if (detailImg && step.has_coordinate && step.coordinate) {
-                const addMarkers = function() {
-                    const container = document.getElementById('detailImgContainer');
-                    container.querySelectorAll('.coord-marker').forEach(m => m.remove());
-                    const scaleX = detailImg.clientWidth / videoWidth;
-                    const scaleY = detailImg.clientHeight / videoHeight;
-                    if (step.action === 'drag' && step.drag_to) {
-                        const m1 = document.createElement('div');
-                        m1.className = 'coord-marker';
-                        m1.setAttribute('data-label', 'from (' + step.coordinate.x + ',' + step.coordinate.y + ')');
-                        m1.style.left = (step.coordinate.x * scaleX) + 'px';
-                        m1.style.top = (step.coordinate.y * scaleY) + 'px';
-                        m1.style.display = 'block';
-                        container.appendChild(m1);
-                        const m2 = document.createElement('div');
-                        m2.className = 'coord-marker drag-end';
-                        m2.setAttribute('data-label', 'to (' + step.drag_to.x + ',' + step.drag_to.y + ')');
-                        m2.style.left = (step.drag_to.x * scaleX) + 'px';
-                        m2.style.top = (step.drag_to.y * scaleY) + 'px';
-                        m2.style.display = 'block';
-                        container.appendChild(m2);
-                    } else {
-                        const m = document.createElement('div');
-                        m.className = 'coord-marker';
-                        m.setAttribute('data-label', step.action + ' (' + step.coordinate.x + ',' + step.coordinate.y + ')');
-                        m.style.left = (step.coordinate.x * scaleX) + 'px';
-                        m.style.top = (step.coordinate.y * scaleY) + 'px';
-                        m.style.display = 'block';
-                        container.appendChild(m);
-                    }
+                const doMarkers = function() {
+                    addMarkersToContainer('detailImgContainer', detailImg, step, videoWidth, videoHeight);
                 };
-                if (detailImg.complete && detailImg.naturalWidth > 0) addMarkers();
-                else detailImg.onload = addMarkers;
+                if (detailImg.complete && detailImg.naturalWidth > 0) doMarkers();
+                else detailImg.onload = doMarkers;
+            }
+        }
+
+        function toggleDetailFinetune(idx) {
+            const panel = document.getElementById('detail-finetune-panel');
+            if (!panel) return;
+            detailFinetuneActive = !detailFinetuneActive;
+            panel.classList.toggle('show', detailFinetuneActive);
+        }
+
+        function updateDetailMarker(idx) {
+            const step = taskData.steps[idx];
+            const xInput = document.getElementById('detail-cx');
+            const yInput = document.getElementById('detail-cy');
+            const imgEl = document.getElementById('detailImg');
+            if (!xInput || !yInput || !imgEl) return;
+            const x = parseInt(xInput.value) || 0;
+            const y = parseInt(yInput.value) || 0;
+            const videoWidth = taskData.video_width || 1920;
+            const videoHeight = taskData.video_height || 1080;
+            const tempStep = Object.assign({}, step, { coordinate: { x, y } });
+            addMarkersToContainer('detailImgContainer', imgEl, tempStep, videoWidth, videoHeight);
+        }
+
+        function handleDetailImageClick(event, idx) {
+            if (!detailFinetuneActive) return;
+            const imgEl = document.getElementById('detailImg');
+            if (!imgEl) return;
+            const rect = imgEl.getBoundingClientRect();
+            const videoWidth = taskData.video_width || 1920;
+            const videoHeight = taskData.video_height || 1080;
+            const scaleX = imgEl.clientWidth / videoWidth;
+            const scaleY = imgEl.clientHeight / videoHeight;
+            const x = Math.round((event.clientX - rect.left) / scaleX);
+            const y = Math.round((event.clientY - rect.top) / scaleY);
+            const xInput = document.getElementById('detail-cx');
+            const yInput = document.getElementById('detail-cy');
+            if (xInput) xInput.value = x;
+            if (yInput) yInput.value = y;
+            updateDetailMarker(idx);
+        }
+
+        async function saveDetailCoordinate(idx) {
+            const step = taskData.steps[idx];
+            const xInput = document.getElementById('detail-cx');
+            const yInput = document.getElementById('detail-cy');
+            if (!xInput || !yInput) return;
+            const x = parseInt(xInput.value) || 0;
+            const y = parseInt(yInput.value) || 0;
+            const origIdx = step.original_index != null ? step.original_index : idx;
+            const adj = coordAdjustments[String(origIdx)];
+            let origX, origY;
+            if (adj && adj.original) { origX = adj.original.x; origY = adj.original.y; }
+            else { origX = step.coordinate.x; origY = step.coordinate.y; }
+
+            await fetch('/api/oss/update_coordinate', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    folder_name: folderName, oss_folder: ossFolder,
+                    step_index: origIdx, x: x, y: y,
+                    original_x: origX, original_y: origY
+                })
+            });
+            coordAdjustments[String(origIdx)] = { x: x, y: y, original: { x: origX, y: origY } };
+            step.coordinate = { x: x, y: y };
+            if (step.action === 'click') {
+                if (step.code.includes('doubleClick')) step.code = 'pyautogui.doubleClick(' + x + ', ' + y + ')';
+                else if (step.code.includes('rightClick')) step.code = 'pyautogui.rightClick(' + x + ', ' + y + ')';
+                else if (step.code.includes('clicks=3')) step.code = 'pyautogui.click(' + x + ', ' + y + ', clicks=3)';
+                else step.code = 'pyautogui.click(' + x + ', ' + y + ')';
+            }
+            detailFinetuneActive = false;
+            renderDetailOverlay(idx);
+            renderGrid();
+            renderStepSidebar();
+        }
+
+        function cancelDetailFinetune(idx) {
+            detailFinetuneActive = false;
+            const panel = document.getElementById('detail-finetune-panel');
+            if (panel) panel.classList.remove('show');
+            const step = taskData.steps[idx];
+            const imgEl = document.getElementById('detailImg');
+            if (step && imgEl) {
+                addMarkersToContainer('detailImgContainer', imgEl, step, taskData.video_width || 1920, taskData.video_height || 1080);
             }
         }
 
@@ -5261,16 +5478,16 @@ OSS_REVIEW_TEMPLATE = '''
                     taskData.steps.forEach((s, i) => { s.index = i; });
                     if (currentStep >= taskData.steps.length) currentStep = Math.max(0, taskData.steps.length - 1);
                     renderStepSidebar();
-                    if (taskData.steps.length > 0) {
-                        selectStep(currentStep);
-                    } else {
-                        document.getElementById('stepDetails').innerHTML = '<div style="padding:20px;color:#888;">No steps remaining</div>';
-                    }
-                    // Close detail overlay and refresh grid if in grid mode
+                    // Close detail overlay if open
                     if (document.getElementById('detailOverlay').classList.contains('show')) {
                         closeDetail();
                     }
-                    if (viewMode === 'grid') renderGrid();
+                    if (taskData.steps.length > 0) {
+                        if (viewMode === 'single') renderAllStepsStacked();
+                        if (viewMode === 'grid') renderGrid();
+                    } else {
+                        document.getElementById('stepsStacked').innerHTML = '<div style="padding:20px;color:#888;">No steps remaining</div>';
+                    }
                 }
             } catch (err) { console.error('Delete step failed:', err); }
         }
