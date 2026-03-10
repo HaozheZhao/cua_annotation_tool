@@ -28,6 +28,13 @@ oss_cache/
 # Review status
 review_status.json
 
+# OSS annotation overlays (per-server state)
+oss_annotations.json
+oss_coord_adjustments.json
+
+# Export output
+export/
+
 # Annotation state (optional - uncomment to exclude)
 # annotations.json
 # coordinate_adjustments.json

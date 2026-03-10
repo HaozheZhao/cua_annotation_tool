@@ -211,6 +211,59 @@ def get_presigned_url(key, expires=3600):
         return None
 
 
+def upload_annotation_overlay(oss_folder, folder_name, overlay_data):
+    """
+    Upload annotation overlay to OSS at {oss_folder}_annotations/{folder_name}/overlay.json.
+    The original data in {oss_folder}/{folder_name}/ is NEVER touched.
+    Returns True on success, False on failure.
+    """
+    bucket = _get_bucket()
+    annotations_folder = oss_folder.rstrip("/") + "_annotations"
+    key = f"{annotations_folder}/{folder_name}/overlay.json"
+
+    try:
+        content = json.dumps(overlay_data, indent=2, ensure_ascii=False)
+        bucket.put_object(key, content.encode("utf-8"))
+        return True
+    except Exception:
+        return False
+
+
+def download_annotation_overlay(oss_folder, folder_name):
+    """
+    Download annotation overlay from OSS at {oss_folder}_annotations/{folder_name}/overlay.json.
+    Returns the parsed JSON dict, or None if not found.
+    """
+    bucket = _get_bucket()
+    annotations_folder = oss_folder.rstrip("/") + "_annotations"
+    key = f"{annotations_folder}/{folder_name}/overlay.json"
+
+    try:
+        result = bucket.get_object(key)
+        content = result.read().decode("utf-8")
+        return json.loads(content)
+    except oss2.exceptions.NoSuchKey:
+        return None
+    except Exception:
+        return None
+
+
+def delete_annotation_overlay(oss_folder, folder_name):
+    """
+    Delete annotation overlay from OSS.
+    Returns True on success, False on failure.
+    """
+    bucket = _get_bucket()
+    annotations_folder = oss_folder.rstrip("/") + "_annotations"
+    key = f"{annotations_folder}/{folder_name}/overlay.json"
+
+    try:
+        bucket.delete_object(key)
+        return True
+    except Exception:
+        return False
+
+
 def parse_folder_name_metadata(folder_name):
     """
     Parse metadata from a recording folder name.

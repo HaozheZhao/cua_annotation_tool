@@ -7,11 +7,12 @@ import json
 import os
 import re
 import csv
+import io
 import shutil
 import zipfile
 from pathlib import Path
 from datetime import datetime
-from flask import Flask, render_template_string, send_from_directory, jsonify, request, Response
+from flask import Flask, render_template_string, send_from_directory, jsonify, request, Response, stream_with_context
 
 app = Flask(__name__)
 
@@ -287,6 +288,77 @@ def save_oss_coord_adjustments(adjustments):
     OSS_COORD_ADJUSTMENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(OSS_COORD_ADJUSTMENTS_FILE, 'w') as f:
         json.dump(adjustments, f, indent=2, ensure_ascii=False)
+
+def _build_case_overlay(oss_folder, folder_name):
+    """Build the complete overlay dict for a case by merging annotations + coord adjustments.
+    This is what gets uploaded to OSS as the single source of truth."""
+    ann_key = f"{oss_folder}/{folder_name}"
+    oss_annotations = load_oss_annotations()
+    ann = oss_annotations.get(ann_key, {})
+
+    # Merge coord adjustments into the overlay
+    coord_adjustments = load_oss_coord_adjustments()
+    case_coords = {}
+    prefix = ann_key + '_'
+    for k, v in coord_adjustments.items():
+        if k.startswith(prefix):
+            step_idx = k[len(prefix):]
+            case_coords[step_idx] = v
+    if case_coords:
+        ann['coord_adjustments'] = case_coords
+
+    # Add timestamp
+    ann['_last_updated'] = datetime.utcnow().isoformat() + 'Z'
+
+    return ann
+
+
+def _sync_overlay_to_oss(oss_folder, folder_name):
+    """Build overlay and upload to OSS at {oss_folder}_annotations/{folder_name}/overlay.json.
+    Called after each local save to keep OSS in sync. Runs best-effort (non-blocking on failure)."""
+    try:
+        import oss_client
+        overlay = _build_case_overlay(oss_folder, folder_name)
+        oss_client.upload_annotation_overlay(oss_folder, folder_name, overlay)
+    except Exception:
+        pass  # Best-effort; local save already succeeded
+
+
+def _load_overlay_from_oss(oss_folder, folder_name):
+    """Download overlay from OSS and merge into local files.
+    Called when loading a case to ensure we have the latest data from OSS."""
+    try:
+        import oss_client
+        overlay = oss_client.download_annotation_overlay(oss_folder, folder_name)
+        if overlay is None:
+            return  # No overlay on OSS, use local data
+
+        ann_key = f"{oss_folder}/{folder_name}"
+
+        # Extract coord_adjustments from overlay and store separately
+        case_coords = overlay.pop('coord_adjustments', {})
+        overlay.pop('_last_updated', None)
+
+        # Update local annotations
+        oss_annotations = load_oss_annotations()
+        local_ann = oss_annotations.get(ann_key, {})
+        local_ts = local_ann.get('_last_updated', '')
+        oss_ts = overlay.get('_last_updated', '')
+
+        # OSS overlay wins (it's the shared source of truth)
+        oss_annotations[ann_key] = overlay
+        save_oss_annotations(oss_annotations)
+
+        # Update local coord adjustments
+        if case_coords:
+            coord_adjustments = load_oss_coord_adjustments()
+            for step_idx, adj in case_coords.items():
+                coord_adjustments[f"{ann_key}_{step_idx}"] = adj
+            save_oss_coord_adjustments(coord_adjustments)
+
+    except Exception:
+        pass  # Best-effort; fall back to local data
+
 
 def load_oss_task_data(local_dir):
     """Load task data from locally cached OSS recording files.
@@ -2465,6 +2537,16 @@ DASHBOARD_TEMPLATE = '''
         .empty-state .empty-icon { font-size: 4em; margin-bottom: 20px; opacity: 0.3; }
         .empty-state h2 { color: #444; margin-bottom: 12px; font-size: 1.4em; }
         .empty-state p { color: #555; font-size: 1em; }
+        .btn-export-all {
+            padding: 10px 24px;
+            border: none; border-radius: 8px;
+            background: linear-gradient(135deg, #4caf50, #2e7d32);
+            color: white; cursor: pointer;
+            font-weight: bold; font-size: 0.9em;
+            transition: all 0.3s;
+        }
+        .btn-export-all:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(76,175,80,0.3); }
+        .btn-export-all:disabled { background: #333; color: #666; cursor: not-allowed; transform: none; box-shadow: none; }
     </style>
 </head>
 <body>
@@ -2477,6 +2559,17 @@ DASHBOARD_TEMPLATE = '''
             <label class="auto-poll-label">
                 <input type="checkbox" id="autoPoll" /> Auto-refresh (60s)
             </label>
+            <button class="btn-export-all" id="exportAllBtn" onclick="exportAll()" style="display:none;">Export All Graded</button>
+        </div>
+    </div>
+    <!-- Export progress overlay -->
+    <div id="exportOverlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,15,26,0.92);z-index:2000;justify-content:center;align-items:center;">
+        <div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:30px 40px;text-align:center;min-width:360px;">
+            <div style="color:#00d9ff;font-size:1.2em;margin-bottom:16px;" id="exportTitle">Exporting...</div>
+            <div style="background:#252542;border-radius:6px;height:12px;overflow:hidden;margin-bottom:12px;">
+                <div id="exportProgressBar" style="height:100%;background:linear-gradient(90deg,#00d9ff,#7c4dff);width:0%;transition:width 0.3s;"></div>
+            </div>
+            <div style="color:#888;font-size:0.85em;" id="exportStatus">Preparing export...</div>
         </div>
     </div>
     <div class="stats-row" id="statsRow" style="display:none;">
@@ -2555,6 +2648,7 @@ DASHBOARD_TEMPLATE = '''
                 renderDashboard(data);
 
                 document.getElementById('statsRow').style.display = 'grid';
+                document.getElementById('exportAllBtn').style.display = 'inline-block';
 
             } catch (err) {
                 document.getElementById('content').innerHTML =
@@ -2680,6 +2774,95 @@ DASHBOARD_TEMPLATE = '''
         document.getElementById('ossFolder').addEventListener('keydown', function(e) {
             if (e.key === 'Enter') loadDashboard();
         });
+
+        async function exportAll() {
+            const folder = document.getElementById('ossFolder').value.trim();
+            if (!folder) return;
+
+            const overlay = document.getElementById('exportOverlay');
+            overlay.style.display = 'flex';
+            document.getElementById('exportProgressBar').style.width = '10%';
+            document.getElementById('exportStatus').textContent = 'Checking graded recordings...';
+
+            try {
+                // First check how many to export
+                const checkResp = await fetch('/api/oss/export_progress?folder=' + encodeURIComponent(folder));
+                const checkData = await checkResp.json();
+
+                if (checkData.total === 0) {
+                    document.getElementById('exportTitle').textContent = 'Nothing to export';
+                    document.getElementById('exportStatus').textContent = 'No graded recordings found. Grade some recordings first.';
+                    document.getElementById('exportProgressBar').style.width = '100%';
+                    document.getElementById('exportProgressBar').style.background = '#f44336';
+                    setTimeout(() => { overlay.style.display = 'none'; }, 2000);
+                    return;
+                }
+
+                document.getElementById('exportStatus').textContent =
+                    'Exporting ' + checkData.total + ' graded recordings (' + checkData.cached + ' cached)...';
+                document.getElementById('exportProgressBar').style.width = '30%';
+
+                // Trigger the export download
+                document.getElementById('exportProgressBar').style.width = '50%';
+                document.getElementById('exportStatus').textContent = 'Building ZIP file with screenshots...';
+
+                // Use XMLHttpRequest for progress tracking
+                const xhr = new XMLHttpRequest();
+                xhr.open('GET', '/api/oss/export_all?folder=' + encodeURIComponent(folder), true);
+                xhr.responseType = 'blob';
+
+                xhr.onprogress = function(e) {
+                    if (e.lengthComputable) {
+                        const pct = Math.round(50 + (e.loaded / e.total) * 50);
+                        document.getElementById('exportProgressBar').style.width = pct + '%';
+                    } else {
+                        document.getElementById('exportProgressBar').style.width = '75%';
+                    }
+                };
+
+                xhr.onload = function() {
+                    if (xhr.status === 200) {
+                        document.getElementById('exportProgressBar').style.width = '100%';
+                        document.getElementById('exportStatus').textContent = 'Download starting...';
+
+                        // Trigger download
+                        const blob = xhr.response;
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'export_' + folder + '.zip';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+
+                        document.getElementById('exportTitle').textContent = 'Export Complete!';
+                        document.getElementById('exportStatus').textContent = checkData.total + ' recordings exported successfully.';
+                        setTimeout(() => { overlay.style.display = 'none'; }, 2000);
+                    } else {
+                        document.getElementById('exportTitle').textContent = 'Export Failed';
+                        document.getElementById('exportStatus').textContent = 'Server returned error ' + xhr.status;
+                        document.getElementById('exportProgressBar').style.background = '#f44336';
+                        setTimeout(() => { overlay.style.display = 'none'; }, 3000);
+                    }
+                };
+
+                xhr.onerror = function() {
+                    document.getElementById('exportTitle').textContent = 'Export Failed';
+                    document.getElementById('exportStatus').textContent = 'Network error occurred';
+                    document.getElementById('exportProgressBar').style.background = '#f44336';
+                    setTimeout(() => { overlay.style.display = 'none'; }, 3000);
+                };
+
+                xhr.send();
+
+            } catch (err) {
+                document.getElementById('exportTitle').textContent = 'Export Failed';
+                document.getElementById('exportStatus').textContent = err.message;
+                document.getElementById('exportProgressBar').style.background = '#f44336';
+                setTimeout(() => { overlay.style.display = 'none'; }, 3000);
+            }
+        }
     </script>
 </body>
 </html>
@@ -3312,6 +3495,74 @@ OSS_REVIEW_TEMPLATE = '''
             padding: 2px 8px; border-radius: 10px;
             font-size: 0.78em; margin: 2px;
         }
+
+        /* Editable justification */
+        .justification-edit-area {
+            margin-top: 6px;
+            padding-top: 6px;
+            border-top: 1px solid #333;
+        }
+        .justification-input {
+            width: 100%; padding: 6px 8px;
+            border: 1px solid #444; border-radius: 4px;
+            background: #0d1117; color: #ffc107;
+            resize: vertical; min-height: 40px;
+            font-family: inherit; font-size: 0.85em;
+            border-left: 3px solid #ffc107;
+        }
+        .justification-input:focus { border-color: #00d9ff; outline: none; }
+
+        /* Editable query */
+        .query-edit-input {
+            padding: 4px 8px;
+            border: 1px solid #444; border-radius: 4px;
+            background: #0d1117; color: #ffc107;
+            font-family: inherit; font-size: 0.85em;
+            resize: vertical; min-height: 28px; width: 300px;
+        }
+        .query-edit-input:focus { border-color: #00d9ff; outline: none; }
+        .info-item-query { flex: 1; min-width: 200px; }
+
+        /* Delete step button */
+        .delete-step-btn {
+            padding: 2px 10px;
+            background: transparent;
+            border: 1px solid #f4433688;
+            border-radius: 4px;
+            color: #f44336;
+            cursor: pointer;
+            font-size: 0.7em;
+            font-weight: bold;
+            margin-left: 8px;
+            transition: all 0.2s;
+        }
+        .delete-step-btn:hover { background: #f44336; color: #fff; }
+
+        /* Export button */
+        .export-case-btn {
+            padding: 5px 14px;
+            background: linear-gradient(135deg, #4caf50, #2e7d32);
+            border: none; border-radius: 5px;
+            color: white; cursor: pointer;
+            font-weight: bold; font-size: 0.8em;
+            transition: all 0.2s;
+        }
+        .export-case-btn:hover { transform: translateY(-1px); box-shadow: 0 3px 10px rgba(76,175,80,0.3); }
+
+        /* Reset button */
+        .btn-reset {
+            padding: 5px 14px;
+            border: 1px solid #ff980088;
+            border-radius: 4px;
+            background: transparent;
+            color: #ff9800;
+            cursor: pointer;
+            font-size: 0.8em;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        .btn-reset:hover { background: #ff9800; color: #000; }
+        .btn-reset.confirming { background: #f44336; color: #fff; border-color: #f44336; }
     </style>
 </head>
 <body>
@@ -3327,6 +3578,7 @@ OSS_REVIEW_TEMPLATE = '''
             <button id="modeReview" class="active" onclick="setMode('review')">Review</button>
             <button id="modeAnnotation" onclick="setMode('annotation')">Annotate</button>
         </div>
+        <button class="btn-reset" onclick="confirmResetCase()">Reset to Original</button>
         <a class="btn-back" href="/dashboard" id="backLink">Dashboard</a>
     </div>
 
@@ -3579,11 +3831,14 @@ OSS_REVIEW_TEMPLATE = '''
 
                 document.getElementById('taskName').textContent = taskData.task_name || folderName;
 
-                // Annotator info bar
+                // Annotator info bar with editable query
                 let infoHtml = '';
                 if (info.username) infoHtml += '<div class="info-item"><span>Annotator:</span> <b>' + info.username + '</b></div>';
                 if (info.task_id) infoHtml += '<div class="info-item"><span>Task:</span> <b>' + info.task_id + '</b></div>';
-                if (info.query) infoHtml += '<div class="info-item"><span>Query:</span> <b>' + info.query + '</b></div>';
+                infoHtml += '<div class="info-item info-item-query"><span>Query:</span> ' +
+                    '<textarea class="query-edit-input" id="query-edit" onchange="saveQuery(this.value)" placeholder="Enter query...">' +
+                    (info.query || '') + '</textarea></div>';
+                infoHtml += '<div class="info-item"><button class="export-case-btn" onclick="exportCase()">Export Case</button></div>';
                 document.getElementById('annotatorInfo').innerHTML = infoHtml || '<div class="info-item"><span>No annotator info</span></div>';
 
                 // Human-provided data section
@@ -3652,7 +3907,8 @@ OSS_REVIEW_TEMPLATE = '''
             document.getElementById('prevBtn').disabled = idx <= 0;
             document.getElementById('nextBtn').disabled = idx >= steps.length - 1;
 
-            const adj = coordAdjustments[String(idx)];
+            const origIdx = step.original_index != null ? step.original_index : idx;
+            const adj = coordAdjustments[String(origIdx)];
             const isAdjusted = !!adj;
             const origCoord = isAdjusted ? (adj.original || step.coordinate) : step.coordinate;
             const videoWidth = taskData.video_width || 1920;
@@ -3728,6 +3984,7 @@ OSS_REVIEW_TEMPLATE = '''
             // Step details
             let dHtml = '<h4>Step ' + idx + ': ' + (step.action || '');
             if (isAdjusted) dHtml += ' <span class="adjusted-badge">Adjusted</span>';
+            dHtml += ' <button class="delete-step-btn" onclick="confirmDeleteStep(' + idx + ')" title="Delete this step">Delete Step</button>';
             dHtml += '</h4>';
             dHtml += '<div class="code"><span id="action-code-display">' + (step.code || '') + '</span></div>';
             if (step.has_coordinate) {
@@ -3741,7 +3998,11 @@ OSS_REVIEW_TEMPLATE = '''
                 dHtml += ' <button class="finetune-btn" onclick="toggleFinetune()">Fine-tune</button></div>';
             }
             if (step.description) dHtml += '<div class="description">' + step.description + '</div>';
-            if (step.justification) dHtml += '<div class="justification">' + step.justification + '</div>';
+            // Editable justification
+            dHtml += '<div class="justification-edit-area">';
+            dHtml += '<label style="color:#888;font-size:0.78em;display:block;margin-bottom:3px;">Justification:</label>';
+            dHtml += '<textarea class="justification-input" id="justification-edit" onchange="saveJustification(' + idx + ', this.value)" placeholder="Step justification...">' + (step.justification || '') + '</textarea>';
+            dHtml += '</div>';
             document.getElementById('stepDetails').innerHTML = dHtml;
 
             // Coord finetune panel
@@ -3917,6 +4178,151 @@ OSS_REVIEW_TEMPLATE = '''
             }
         }
 
+        // ========== Editable fields ==========
+
+        async function saveJustification(stepIdx, value) {
+            // Update local data and use original_index for overlay reference
+            const step = taskData && taskData.steps[stepIdx];
+            if (step) {
+                step.justification = value;
+                const origIdx = step.original_index != null ? step.original_index : stepIdx;
+                try {
+                    await fetch('/api/oss/update_justification', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            folder_name: folderName, oss_folder: ossFolder,
+                            step_index: origIdx, justification: value
+                        })
+                    });
+                } catch (err) { console.error('Save justification failed:', err); }
+            }
+        }
+
+        async function saveQuery(value) {
+            try {
+                await fetch('/api/oss/update_query', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        folder_name: folderName, oss_folder: ossFolder, query: value
+                    })
+                });
+                if (taskData && taskData.annotator_info) taskData.annotator_info.query = value;
+            } catch (err) { console.error('Save query failed:', err); }
+        }
+
+        // ========== Delete step ==========
+
+        let deleteConfirmStep = null;
+        function confirmDeleteStep(stepIdx) {
+            if (deleteConfirmStep === stepIdx) {
+                // Second click - actually delete
+                doDeleteStep(stepIdx);
+                deleteConfirmStep = null;
+            } else {
+                // First click - ask for confirmation
+                deleteConfirmStep = stepIdx;
+                const btn = document.querySelector('.delete-step-btn');
+                if (btn) {
+                    btn.textContent = 'CONFIRM DELETE?';
+                    btn.style.background = '#f44336';
+                    btn.style.color = '#fff';
+                }
+                setTimeout(() => {
+                    if (deleteConfirmStep === stepIdx) {
+                        deleteConfirmStep = null;
+                        const btn = document.querySelector('.delete-step-btn');
+                        if (btn) {
+                            btn.textContent = 'Delete Step';
+                            btn.style.background = '';
+                            btn.style.color = '';
+                        }
+                    }
+                }, 3000);
+            }
+        }
+
+        async function doDeleteStep(stepIdx) {
+            // Use original_index for the overlay reference (not display index)
+            const step = taskData && taskData.steps[stepIdx];
+            if (!step) return;
+            const origIdx = step.original_index != null ? step.original_index : stepIdx;
+            try {
+                await fetch('/api/oss/delete_step', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        folder_name: folderName, oss_folder: ossFolder, original_index: origIdx
+                    })
+                });
+                // Remove step from local display data
+                if (taskData && taskData.steps) {
+                    taskData.steps.splice(stepIdx, 1);
+                    // Re-index for display (keep original_index intact)
+                    taskData.steps.forEach((s, i) => { s.index = i; });
+                    if (currentStep >= taskData.steps.length) currentStep = Math.max(0, taskData.steps.length - 1);
+                    renderStepSidebar();
+                    if (taskData.steps.length > 0) {
+                        selectStep(currentStep);
+                    } else {
+                        document.getElementById('stepDetails').innerHTML = '<div style="padding:20px;color:#888;">No steps remaining</div>';
+                    }
+                }
+            } catch (err) { console.error('Delete step failed:', err); }
+        }
+
+        // ========== Export ==========
+
+        function exportCase() {
+            const url = '/api/oss/export_case/' + encodeURIComponent(folderName) + '?folder=' + encodeURIComponent(ossFolder);
+            window.location.href = url;
+        }
+
+        // ========== Reset to Original ==========
+
+        let resetConfirmed = false;
+        function confirmResetCase() {
+            const btn = document.querySelector('.btn-reset');
+            if (resetConfirmed) {
+                // Second click - actually reset
+                doResetCase();
+                resetConfirmed = false;
+                if (btn) { btn.textContent = 'Reset to Original'; btn.classList.remove('confirming'); }
+            } else {
+                // First click - ask for confirmation
+                resetConfirmed = true;
+                if (btn) { btn.textContent = 'CONFIRM RESET?'; btn.classList.add('confirming'); }
+                setTimeout(() => {
+                    if (resetConfirmed) {
+                        resetConfirmed = false;
+                        if (btn) { btn.textContent = 'Reset to Original'; btn.classList.remove('confirming'); }
+                    }
+                }, 3000);
+            }
+        }
+
+        async function doResetCase() {
+            try {
+                await fetch('/api/oss/reset_case', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ folder_name: folderName, oss_folder: ossFolder })
+                });
+                // Reload everything fresh from OSS
+                taskData = null;
+                currentStep = 0;
+                finetuneActive = false;
+                annotation = {};
+                coordAdjustments = {};
+                reviewStatus = 'unreviewed';
+                updateReviewUI();
+                document.getElementById('loadingOverlay').style.display = 'flex';
+                await loadTask();
+                loadRecordingSidebar();
+            } catch (err) { console.error('Reset failed:', err); }
+        }
+
         // ========== Coordinate fine-tuning ==========
 
         function toggleFinetune() {
@@ -3950,8 +4356,9 @@ OSS_REVIEW_TEMPLATE = '''
             const x = parseInt(xInput.value) || 0;
             const y = parseInt(yInput.value) || 0;
             const step = taskData.steps[currentStep];
+            const origIdx = step.original_index != null ? step.original_index : currentStep;
             let origX, origY;
-            const adj = coordAdjustments[String(currentStep)];
+            const adj = coordAdjustments[String(origIdx)];
             if (adj && adj.original) { origX = adj.original.x; origY = adj.original.y; }
             else { origX = window._origCoords.x; origY = window._origCoords.y; }
 
@@ -3960,11 +4367,11 @@ OSS_REVIEW_TEMPLATE = '''
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
                     folder_name: folderName, oss_folder: ossFolder,
-                    step_index: currentStep, x: x, y: y,
+                    step_index: origIdx, x: x, y: y,
                     original_x: origX, original_y: origY
                 })
             });
-            coordAdjustments[String(currentStep)] = { x: x, y: y, original: { x: origX, y: origY } };
+            coordAdjustments[String(origIdx)] = { x: x, y: y, original: { x: origX, y: origY } };
             step.coordinate = { x: x, y: y };
             if (step.action === 'click') {
                 if (step.code.includes('doubleClick')) step.code = 'pyautogui.doubleClick(' + x + ', ' + y + ')';
@@ -4185,24 +4592,36 @@ def api_oss_folder_recordings():
 
 @app.route('/api/oss/task/<path:folder_name>')
 def api_oss_task(folder_name):
-    """Load recording data for review from OSS."""
+    """Load recording data for review from OSS.
+
+    Architecture:
+      - oss_cache/ files are a READ-ONLY mirror of {oss_folder}/{folder_name}/ on OSS
+      - User modifications are stored as overlay in {oss_folder}_annotations/{folder_name}/overlay.json on OSS
+      - Local files (oss_annotations.json, oss_coord_adjustments.json) are a write-through cache
+      - On load: download overlay from OSS -> update local cache -> apply on top of original data
+      - On save: write local -> upload overlay to OSS
+      - Original data on OSS is NEVER modified.
+    """
     oss_folder = request.args.get('folder', 'recordings_0303')
     try:
         import oss_client
 
         prefix = oss_folder.rstrip('/') + '/' + folder_name
 
-        # Create local cache directory
+        # Step 1: Download overlay from OSS -> merge into local files
+        _load_overlay_from_oss(oss_folder, folder_name)
+
+        # Step 2: Create local cache directory (read-only mirror of OSS)
         local_dir = OSS_CACHE_DIR / folder_name
         local_dir.mkdir(parents=True, exist_ok=True)
 
-        # Download metadata files
+        # Step 3: Download metadata files (skips if already cached)
         oss_client.download_recording_metadata_files(prefix, str(local_dir))
 
         # Download video (lazy - skip if already cached)
         oss_client.download_video(prefix, str(local_dir))
 
-        # Load task data from cached files
+        # Load ORIGINAL task data from cached files
         data = load_oss_task_data(local_dir)
         if not data:
             return jsonify({'error': 'Could not load recording data. Missing required files.'}), 404
@@ -4213,18 +4632,33 @@ def api_oss_task(folder_name):
         data['review_status'] = review_statuses.get(review_key, 'unreviewed')
         data['folder_name'] = folder_name
 
-        # Include annotation data
+        # === Load overlay data ===
         oss_annotations = load_oss_annotations()
-        data['annotation'] = oss_annotations.get(review_key, {})
+        ann = oss_annotations.get(review_key, {})
+        data['annotation'] = ann
 
-        # Include and apply coordinate adjustments
+        # === Apply overlay: justification edits ===
+        # Each step keeps its original_index so overlays reference the correct step
+        justification_edits = ann.get('justification_edits', {})
+        for step in data.get('steps', []):
+            step['original_index'] = step['index']  # preserve original index
+            si = str(step['index'])
+            if si in justification_edits:
+                step['justification'] = justification_edits[si]
+
+        # === Apply overlay: query edit ===
+        if 'query' in ann and ann['query']:
+            if 'annotator_info' in data:
+                data['annotator_info']['query'] = ann['query']
+
+        # === Apply overlay: coordinate adjustments ===
         coord_adjustments = load_oss_coord_adjustments()
         data['coord_adjustments'] = {}
         for step in data.get('steps', []):
-            adj_key = f"{review_key}_{step['index']}"
+            adj_key = f"{review_key}_{step['original_index']}"
             if adj_key in coord_adjustments:
                 adj = coord_adjustments[adj_key]
-                data['coord_adjustments'][str(step['index'])] = adj
+                data['coord_adjustments'][str(step['original_index'])] = adj
                 # Apply adjustment to step data
                 step['coordinate'] = {'x': adj['x'], 'y': adj['y']}
                 x, y = adj['x'], adj['y']
@@ -4241,6 +4675,16 @@ def api_oss_task(folder_name):
                     match = re.search(r'dragTo\((\d+),\s*(\d+)\)', code)
                     if match:
                         step['code'] = f"pyautogui.moveTo({x}, {y}); pyautogui.dragTo({match.group(1)}, {match.group(2)})"
+
+        # === Apply overlay: filter deleted steps ===
+        deleted_steps = set(ann.get('deleted_steps', []))
+        if deleted_steps:
+            data['steps'] = [s for s in data['steps'] if s['original_index'] not in deleted_steps]
+            # Re-index for display (but keep original_index for overlay references)
+            for i, step in enumerate(data['steps']):
+                step['index'] = i
+
+        data['deleted_step_count'] = len(deleted_steps)
 
         return jsonify(data)
 
@@ -4307,7 +4751,9 @@ def api_oss_annotate():
     ann_key = f"{oss_folder}/{folder_name}"
 
     oss_annotations = load_oss_annotations()
-    oss_annotations[ann_key] = {
+    # Preserve existing fields if present
+    existing = oss_annotations.get(ann_key, {})
+    existing.update({
         'mark': mark,
         'scores': scores,
         'pass_reason': pass_reason,
@@ -4315,7 +4761,15 @@ def api_oss_annotate():
         'custom_nodes': custom_nodes,
         'related_apps': related_apps,
         'step_by_step_instructions': step_by_step_instructions,
-    }
+    })
+    # Also save optional fields if provided
+    if 'query' in data:
+        existing['query'] = data['query']
+    if 'justification_edits' in data:
+        existing['justification_edits'] = data['justification_edits']
+    if 'deleted_steps' in data:
+        existing['deleted_steps'] = data['deleted_steps']
+    oss_annotations[ann_key] = existing
     save_oss_annotations(oss_annotations)
 
     # Sync to review_status.json
@@ -4328,6 +4782,7 @@ def api_oss_annotate():
         review_statuses[ann_key] = 'unreviewed'
     save_review_status(review_statuses)
 
+    _sync_overlay_to_oss(oss_folder, folder_name)
     return jsonify({'success': True})
 
 @app.route('/api/oss/update_coordinate', methods=['POST'])
@@ -4363,6 +4818,7 @@ def api_oss_update_coordinate():
     }
     save_oss_coord_adjustments(coord_adjustments)
 
+    _sync_overlay_to_oss(oss_folder, folder_name)
     return jsonify({'success': True})
 
 @app.route('/api/oss/review', methods=['POST'])
@@ -4392,7 +4848,392 @@ def api_oss_review():
             oss_annotations[review_key]['mark'] = None
         save_oss_annotations(oss_annotations)
 
+    _sync_overlay_to_oss(oss_folder, folder_name)
     return jsonify({'success': True})
+
+@app.route('/api/oss/update_justification', methods=['POST'])
+def api_oss_update_justification():
+    """Save edited justification for a step of an OSS recording.
+    Stores in overlay only - never modifies cached OSS files."""
+    data = request.json
+    folder_name = data.get('folder_name', '')
+    oss_folder = data.get('oss_folder', 'recordings_0303')
+    step_index = data.get('step_index')
+    justification = data.get('justification', '')
+
+    ann_key = f"{oss_folder}/{folder_name}"
+    oss_annotations = load_oss_annotations()
+    existing = oss_annotations.get(ann_key, {})
+    edits = existing.get('justification_edits', {})
+    edits[str(step_index)] = justification
+    existing['justification_edits'] = edits
+    oss_annotations[ann_key] = existing
+    save_oss_annotations(oss_annotations)
+
+    _sync_overlay_to_oss(oss_folder, folder_name)
+    return jsonify({'success': True})
+
+
+@app.route('/api/oss/update_query', methods=['POST'])
+def api_oss_update_query():
+    """Save edited query for an OSS recording.
+    Stores in overlay only - never modifies cached OSS files."""
+    data = request.json
+    folder_name = data.get('folder_name', '')
+    oss_folder = data.get('oss_folder', 'recordings_0303')
+    query = data.get('query', '')
+
+    ann_key = f"{oss_folder}/{folder_name}"
+    oss_annotations = load_oss_annotations()
+    existing = oss_annotations.get(ann_key, {})
+    existing['query'] = query
+    oss_annotations[ann_key] = existing
+    save_oss_annotations(oss_annotations)
+
+    _sync_overlay_to_oss(oss_folder, folder_name)
+    return jsonify({'success': True})
+
+
+@app.route('/api/oss/delete_step', methods=['POST'])
+def api_oss_delete_step():
+    """Delete a step from an OSS recording.
+    Stores the ORIGINAL step index in overlay - never modifies cached OSS files.
+    The original_index refers to the step's position in the unmodified OSS data."""
+    data = request.json
+    folder_name = data.get('folder_name', '')
+    oss_folder = data.get('oss_folder', 'recordings_0303')
+    original_index = data.get('original_index')  # index in original unmodified data
+
+    ann_key = f"{oss_folder}/{folder_name}"
+
+    # Track deleted steps by their ORIGINAL index in overlay
+    oss_annotations = load_oss_annotations()
+    existing = oss_annotations.get(ann_key, {})
+    deleted = existing.get('deleted_steps', [])
+    if original_index not in deleted:
+        deleted.append(original_index)
+    existing['deleted_steps'] = sorted(deleted)
+    oss_annotations[ann_key] = existing
+    save_oss_annotations(oss_annotations)
+
+    _sync_overlay_to_oss(oss_folder, folder_name)
+    return jsonify({'success': True})
+
+
+@app.route('/api/oss/reset_case', methods=['POST'])
+def api_oss_reset_case():
+    """Reset a case to its original OSS data by clearing all overlay modifications.
+    Also deletes cached metadata files so they get re-downloaded fresh from OSS."""
+    data = request.json
+    folder_name = data.get('folder_name', '')
+    oss_folder = data.get('oss_folder', 'recordings_0303')
+    ann_key = f"{oss_folder}/{folder_name}"
+
+    # Clear annotation overlay for this case
+    oss_annotations = load_oss_annotations()
+    if ann_key in oss_annotations:
+        del oss_annotations[ann_key]
+        save_oss_annotations(oss_annotations)
+
+    # Clear coordinate adjustments for this case
+    coord_adjustments = load_oss_coord_adjustments()
+    keys_to_delete = [k for k in coord_adjustments if k.startswith(ann_key + '_')]
+    for k in keys_to_delete:
+        del coord_adjustments[k]
+    if keys_to_delete:
+        save_oss_coord_adjustments(coord_adjustments)
+
+    # Clear review status
+    review_statuses = load_review_status()
+    if ann_key in review_statuses:
+        del review_statuses[ann_key]
+        save_review_status(review_statuses)
+
+    # Delete cached metadata files (NOT video) so they get re-downloaded fresh from OSS
+    # This ensures that if the cache was ever corrupted by old code, it self-heals
+    local_dir = OSS_CACHE_DIR / folder_name
+    for fname in ['reduced_events_complete.jsonl', 'reduced_events_vis.jsonl',
+                   'metadata.json', 'annotator_info.json', 'task_name.json', 'knowledge_points.json']:
+        fpath = local_dir / fname
+        if fpath.exists():
+            fpath.unlink()
+
+    # Delete overlay from OSS
+    try:
+        import oss_client
+        oss_client.delete_annotation_overlay(oss_folder, folder_name)
+    except Exception:
+        pass
+
+    return jsonify({'success': True})
+
+
+@app.route('/api/oss/export_case/<path:folder_name>')
+def api_oss_export_case(folder_name):
+    """Export a single graded case as a downloadable zip with JSONL and images."""
+    import cv2
+
+    oss_folder = request.args.get('folder', 'recordings_0303')
+    ann_key = f"{oss_folder}/{folder_name}"
+
+    local_dir = OSS_CACHE_DIR / folder_name
+    if not local_dir.exists():
+        return jsonify({'error': 'Recording not cached locally'}), 404
+
+    # Load data
+    task_data = load_oss_task_data(local_dir)
+    if not task_data:
+        return jsonify({'error': 'Could not load recording data'}), 404
+
+    oss_annotations = load_oss_annotations()
+    ann = oss_annotations.get(ann_key, {})
+    coord_adjustments = load_oss_coord_adjustments()
+
+    # Apply overlay: coord adjustments, justification edits, deleted steps
+    steps = task_data.get('steps', [])
+    justification_edits = ann.get('justification_edits', {})
+    deleted_steps = set(ann.get('deleted_steps', []))
+    for step in steps:
+        si = str(step['index'])
+        adj_key_s = f"{ann_key}_{step['index']}"
+        if adj_key_s in coord_adjustments:
+            adj = coord_adjustments[adj_key_s]
+            step['coordinate'] = {'x': adj['x'], 'y': adj['y']}
+        if si in justification_edits:
+            step['justification'] = justification_edits[si]
+
+    # Filter out deleted steps
+    if deleted_steps:
+        steps = [s for s in steps if s['index'] not in deleted_steps]
+
+    # Find video
+    video_file = None
+    for f in local_dir.glob('*.mp4'):
+        if 'video_clips' not in str(f):
+            video_file = f
+            break
+
+    # Build zip in memory
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        # Build export JSONL
+        export_lines = []
+        traj = []
+        for step in steps:
+            code = step.get('code', '')
+            # Re-generate code with adjusted coordinates
+            coord = step.get('coordinate', {})
+            x, y = coord.get('x', 0), coord.get('y', 0)
+            action = step.get('action', '')
+
+            traj.append({
+                'index': step['index'],
+                'action_type': action,
+                'code': code,
+                'screenshot': f"step_{step['index']}.png",
+                'coordinate': coord,
+                'justification': step.get('justification', ''),
+                'description': step.get('description', ''),
+            })
+            export_lines.append(json.dumps({
+                'action': action,
+                'coordinate': coord,
+                'justification': step.get('justification', ''),
+                'description': step.get('description', ''),
+                'code': code,
+            }, ensure_ascii=False))
+
+        # Write jsonl
+        zf.writestr(f"{folder_name}/events.jsonl", '\n'.join(export_lines) + '\n')
+
+        # Write export JSON
+        info = task_data.get('annotator_info', {})
+        query = ann.get('query', info.get('query', ''))
+        export_json = {
+            'folder_name': folder_name,
+            'query': query,
+            'instruction': query,
+            'annotator': info.get('username', ''),
+            'task_id': info.get('task_id', ''),
+            'mark': ann.get('mark'),
+            'scores': ann.get('scores', {}),
+            'pass_reason': ann.get('pass_reason', ''),
+            'step_by_step_instructions': ann.get('step_by_step_instructions', ''),
+            'knowledge_points': {
+                'osworld_overlap': ann.get('osworld_overlap', []),
+                'custom_nodes': ann.get('custom_nodes', []),
+            },
+            'related_apps': ann.get('related_apps', []),
+            'traj': traj,
+        }
+        zf.writestr(f"{folder_name}/export.json", json.dumps(export_json, indent=2, ensure_ascii=False))
+
+        # Extract and save screenshots
+        if video_file:
+            cap = cv2.VideoCapture(str(video_file))
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30
+            for step in steps:
+                frame_num = int(step.get('video_time', 0) * fps)
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                frame_num = max(0, min(frame_num, total_frames - 1))
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+                ret, frame = cap.read()
+                if ret:
+                    _, buffer = cv2.imencode('.png', frame)
+                    zf.writestr(f"{folder_name}/step_{step['index']}.png", buffer.tobytes())
+            cap.release()
+
+    buf.seek(0)
+    return Response(
+        buf.getvalue(),
+        mimetype='application/zip',
+        headers={'Content-Disposition': f'attachment; filename={folder_name}.zip'}
+    )
+
+
+@app.route('/api/oss/export_all')
+def api_oss_export_all():
+    """Export all graded cases in a folder as a single zip. Streams progress."""
+    import cv2
+
+    oss_folder = request.args.get('folder', 'recordings_0303')
+    oss_annotations = load_oss_annotations()
+    coord_adjustments = load_oss_coord_adjustments()
+
+    # Find all graded (pass or fail) recordings in this folder
+    graded = {}
+    for ann_key, ann in oss_annotations.items():
+        if ann_key.startswith(oss_folder + '/') and ann.get('mark') in ('pass', 'fail'):
+            rec_name = ann_key[len(oss_folder) + 1:]
+            graded[rec_name] = ann
+
+    if not graded:
+        return jsonify({'error': 'No graded recordings to export'}), 404
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        all_export = []
+
+        for rec_name, ann in graded.items():
+            local_dir = OSS_CACHE_DIR / rec_name
+            if not local_dir.exists():
+                continue
+
+            task_data = load_oss_task_data(local_dir)
+            if not task_data:
+                continue
+
+            ann_key = f"{oss_folder}/{rec_name}"
+            steps = task_data.get('steps', [])
+            justification_edits = ann.get('justification_edits', {})
+            deleted_steps = set(ann.get('deleted_steps', []))
+
+            for step in steps:
+                si = str(step['index'])
+                adj_key_s = f"{ann_key}_{step['index']}"
+                if adj_key_s in coord_adjustments:
+                    adj = coord_adjustments[adj_key_s]
+                    step['coordinate'] = {'x': adj['x'], 'y': adj['y']}
+                if si in justification_edits:
+                    step['justification'] = justification_edits[si]
+
+            # Filter out deleted steps
+            if deleted_steps:
+                steps = [s for s in steps if s['index'] not in deleted_steps]
+
+            # Build export data
+            traj = []
+            export_lines = []
+            for step in steps:
+                coord = step.get('coordinate', {})
+                traj.append({
+                    'index': step['index'],
+                    'action_type': step.get('action', ''),
+                    'code': step.get('code', ''),
+                    'screenshot': f"step_{step['index']}.png",
+                    'coordinate': coord,
+                    'justification': step.get('justification', ''),
+                    'description': step.get('description', ''),
+                })
+                export_lines.append(json.dumps({
+                    'action': step.get('action', ''),
+                    'coordinate': coord,
+                    'justification': step.get('justification', ''),
+                    'description': step.get('description', ''),
+                    'code': step.get('code', ''),
+                }, ensure_ascii=False))
+
+            zf.writestr(f"{rec_name}/events.jsonl", '\n'.join(export_lines) + '\n')
+
+            info = task_data.get('annotator_info', {})
+            query = ann.get('query', info.get('query', ''))
+            export_json = {
+                'folder_name': rec_name,
+                'query': query,
+                'instruction': query,
+                'annotator': info.get('username', ''),
+                'task_id': info.get('task_id', ''),
+                'mark': ann.get('mark'),
+                'scores': ann.get('scores', {}),
+                'pass_reason': ann.get('pass_reason', ''),
+                'step_by_step_instructions': ann.get('step_by_step_instructions', ''),
+                'knowledge_points': {
+                    'osworld_overlap': ann.get('osworld_overlap', []),
+                    'custom_nodes': ann.get('custom_nodes', []),
+                },
+                'related_apps': ann.get('related_apps', []),
+                'traj': traj,
+            }
+            zf.writestr(f"{rec_name}/export.json", json.dumps(export_json, indent=2, ensure_ascii=False))
+            all_export.append(export_json)
+
+            # Extract screenshots
+            video_file = None
+            for f in local_dir.glob('*.mp4'):
+                if 'video_clips' not in str(f):
+                    video_file = f
+                    break
+
+            if video_file:
+                cap = cv2.VideoCapture(str(video_file))
+                fps = cap.get(cv2.CAP_PROP_FPS) or 30
+                for step in steps:
+                    frame_num = int(step.get('video_time', 0) * fps)
+                    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    frame_num = max(0, min(frame_num, total_frames - 1))
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+                    ret, frame = cap.read()
+                    if ret:
+                        _, buffer = cv2.imencode('.png', frame)
+                        zf.writestr(f"{rec_name}/step_{step['index']}.png", buffer.tobytes())
+                cap.release()
+
+        # Write combined JSON
+        zf.writestr('all_export.json', json.dumps(all_export, indent=2, ensure_ascii=False))
+
+    buf.seek(0)
+    return Response(
+        buf.getvalue(),
+        mimetype='application/zip',
+        headers={'Content-Disposition': f'attachment; filename=export_{oss_folder}.zip'}
+    )
+
+
+@app.route('/api/oss/export_progress')
+def api_oss_export_progress():
+    """Return count of graded recordings for progress estimation."""
+    oss_folder = request.args.get('folder', 'recordings_0303')
+    oss_annotations = load_oss_annotations()
+    total = 0
+    cached = 0
+    for ann_key, ann in oss_annotations.items():
+        if ann_key.startswith(oss_folder + '/') and ann.get('mark') in ('pass', 'fail'):
+            total += 1
+            rec_name = ann_key[len(oss_folder) + 1:]
+            if (OSS_CACHE_DIR / rec_name).exists():
+                cached += 1
+    return jsonify({'total': total, 'cached': cached})
+
 
 @app.route('/oss_review/<path:folder_name>')
 def oss_review_page(folder_name):
