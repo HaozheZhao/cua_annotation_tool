@@ -10,9 +10,14 @@ import csv
 import io
 import shutil
 import zipfile
+import base64
+import threading
+import logging
 from pathlib import Path
 from datetime import datetime
 from flask import Flask, render_template_string, send_from_directory, jsonify, request, Response, stream_with_context
+
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
@@ -28,6 +33,81 @@ OSS_COORD_ADJUSTMENTS_FILE = Path(os.environ.get('CUA_OSS_COORD_ADJ', './oss_coo
 
 # Server-side dashboard cache: { folder_name: { annotators: {...}, folder: str, _timestamp: float } }
 _dashboard_cache = {}
+
+# AI Check configuration
+AI_CHECK_API_KEY = os.environ.get('AI_CHECK_API_KEY', '')
+AI_CHECK_BASE_URL = os.environ.get('AI_CHECK_BASE_URL', 'https://openai.sufy.com/v1')
+AI_CHECK_MODEL = os.environ.get('AI_CHECK_MODEL', 'gemini-3.1-flash-lite-preview')
+AI_CHECK_BATCH_SIZE = int(os.environ.get('AI_CHECK_BATCH_SIZE', '5'))
+
+# In-memory tracker for running AI checks: { ann_key: {status, progress, total, steps, ...} }
+_ai_check_tasks = {}
+_ai_check_lock = threading.Lock()
+
+AI_CHECK_SYSTEM_PROMPT = """You are a strict quality assurance AI for CUA (Computer Use Agent) task annotations.
+You review individual steps of GUI operations recorded by human annotators performing tasks on an Ubuntu desktop.
+
+For each step you evaluate TWO things:
+1. OPERATION CORRECTNESS — Is this step correct, necessary, and well-executed for the given task?
+2. JUSTIFICATION QUALITY — Does the written justification meet the strict standards below?
+
+=====================================
+JUSTIFICATION QUALITY STANDARDS
+=====================================
+Each justification MUST answer two core questions:
+  (a) "WHY is this operation performed?" — the specific reason/intent
+  (b) "What is its NECESSITY for completing the task?" — how it advances the overall goal
+
+Grading rubric:
+- "good": Clearly states both WHY and NECESSITY. Specific to this exact step. Written in English.
+- "acceptable": States WHY but NECESSITY is only implied, or is slightly vague but still understandable.
+- "poor": Only describes WHAT is done (not WHY), or uses vague/generic language, or doesn't match the step.
+- "missing": Empty or whitespace-only justification.
+
+STRICT RULES for justification:
+1. A justification that merely re-describes the action (e.g., "Click on the menu" for a click action) is POOR — it says WHAT, not WHY.
+2. Phrases like "do the task", "continue", "next step", "proceed", "complete the operation" are POOR.
+3. Chinese non-executable phrases like "然后完成", "然后处理一下" are POOR.
+4. Must match the actual action. If the step is a click but justification describes typing, it is POOR.
+5. If the justification describes the step's purpose clearly (e.g., "Open the terminal to execute the memory check command") that is GOOD.
+6. ALWAYS provide rewritten_justification when quality is "poor" or "missing". The rewrite should follow the format: "[Specific reason for this action] to [how it advances the task goal]"
+
+EXAMPLES:
+- Action: click on "Show Applications" icon. Justification: "Click the menu and find LibreOffice Calc" → POOR (re-describes action, doesn't explain why LibreOffice Calc is needed for the task)
+  Better: "Open the application launcher to find and start LibreOffice Calc, which is needed to create the spreadsheet for recording memory usage data."
+- Action: type "free -h". Justification: "Type free -h in the command line to check the memory status." → GOOD (explains what + why)
+- Action: click. Justification: "Click Save As to save the document." → POOR (just restates the action)
+  Better: "Click 'Save As' to save the Writer document as 'system_memory_summary.odt', which is the required output format specified in the task."
+
+=====================================
+OPERATION CORRECTNESS STANDARDS
+=====================================
+- "correct": Step is necessary and properly executed for the task.
+- "wrong": Step clicks wrong target, types wrong text, or performs an action that doesn't make sense for the task.
+- "redundant": Step does something already accomplished, or is an unnecessary repeat (e.g., clicking same button twice, scrolling when already at the target, back-and-forth navigation).
+- "suspicious": Step seems questionable — possibly unnecessary exploratory action, or the intent is unclear from the screenshot.
+
+Look at the SCREENSHOT carefully to verify:
+- Is the click target correct? Does the coordinate match a meaningful UI element?
+- After a scroll, is the scroll direction and position reasonable?
+- For typing, is the text relevant to the task?
+- Does this step logically follow from the previous operations summary?
+- Is the same action being repeated unnecessarily?
+
+SPECIFIC OPERATION RULES:
+- Scroll: Mouse should be in a scrollable area. Scroll amount should be moderate.
+- Drag: Must have clear start+end points with no mid-release.
+- Click: Target must be a meaningful UI element for the task.
+- Type: Text must be relevant to the task goal.
+- PROHIBITED: Shaky clicking (repeated clicks at same position), meaningless back-and-forth, redundant operations, clicks on wrong targets.
+
+=====================================
+OUTPUT FORMAT
+=====================================
+Output ONLY a valid JSON object — no markdown fences, no text before/after:
+{"correctness":"correct|wrong|redundant|suspicious","correctness_reason":"1-2 sentence explanation of why this step is correct/wrong/redundant/suspicious","justification_quality":"good|acceptable|poor|missing","justification_issues":["specific issue 1"],"rewritten_justification":"Improved justification following the [reason] to [necessity] format, or null if quality is good/acceptable","flags":[],"operation_summary_update":"Cumulative 2-4 sentence summary of ALL operations from step 1 through this step, for context in checking the next step"}
+
+Possible flags (use when applicable): redundant_click, meaningless_scroll, shaky_click, back_and_forth, wrong_target, unnecessary_step, missing_justification, vague_justification"""
 
 def parse_list_field(value):
     """Parse a comma-separated or JSON list field."""
@@ -358,6 +438,281 @@ def _load_overlay_from_oss(oss_folder, folder_name):
 
     except Exception:
         pass  # Best-effort; fall back to local data
+
+
+# ============================================================================
+# AI Check Helper Functions
+# ============================================================================
+
+def _extract_frame_base64(video_path, video_time, quality=50, max_width=800):
+    """Extract a frame from video and return as base64 JPEG string.
+    Uses reduced resolution (800px) and quality (50) to minimise API latency and token cost."""
+    try:
+        import cv2
+    except ImportError:
+        return None
+    cap = cv2.VideoCapture(str(video_path))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    frame_num = int(video_time * fps)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    frame_num = max(0, min(frame_num, total_frames - 1))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+    ret, frame = cap.read()
+    cap.release()
+    if not ret:
+        return None
+    h, w = frame.shape[:2]
+    if w > max_width:
+        scale = max_width / w
+        frame = cv2.resize(frame, (max_width, int(h * scale)))
+    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    return base64.b64encode(buffer.tobytes()).decode('utf-8')
+
+
+def _call_gemini(messages):
+    """Call the Gemini API via OpenAI-compatible endpoint. Returns response text."""
+    import requests as http_req
+    headers = {
+        "Authorization": f"Bearer {AI_CHECK_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": AI_CHECK_MODEL,
+        "messages": messages,
+        "temperature": 0.1,
+        "max_tokens": 4096,
+    }
+    resp = http_req.post(
+        f"{AI_CHECK_BASE_URL}/chat/completions",
+        headers=headers,
+        json=payload,
+        timeout=180
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return data["choices"][0]["message"]["content"]
+
+
+def _parse_ai_response(text):
+    """Parse JSON from AI response, tolerating markdown fences."""
+    text = text.strip()
+    # Remove markdown code fences
+    if text.startswith('```'):
+        lines = text.split('\n')
+        lines = [l for l in lines if not l.strip().startswith('```')]
+        text = '\n'.join(lines).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # Try to extract first JSON object
+        match = re.search(r'\{[\s\S]*\}', text)
+        if match:
+            try:
+                return json.loads(match.group())
+            except json.JSONDecodeError:
+                pass
+    return None
+
+
+def _check_step_batch(query, instructions, running_summary, batch_steps, batch_images, total_steps, start_idx):
+    """Check a batch of steps in ONE API call. Returns (list_of_results, updated_summary) or None."""
+    n = len(batch_steps)
+    # Build multi-step user prompt — text first, then all images
+    user_text = f"""Task Query: {query}
+Task Instructions: {instructions or 'Not provided'}
+
+== Previous Operations Summary ==
+{running_summary}
+
+== Evaluate the following {n} steps (evaluate ALL of them, one result per step) ==
+"""
+    for i, step in enumerate(batch_steps):
+        idx = start_idx + i + 1
+        action = step.get('action', '')
+        code = step.get('code', '')
+        description = step.get('description', '')
+        justification = step.get('justification', '')
+        coord = step.get('coordinate', {})
+        user_text += f"""
+--- Step {idx} of {total_steps} ---
+- Action: {action}
+- Code: {code}
+- Description: {description}
+- Justification: "{justification or '(empty)'}"
+- Coordinate: ({coord.get('x', 0)}, {coord.get('y', 0)})
+[Screenshot #{idx} attached below]
+"""
+
+    user_text += f"""
+Evaluate ALL {n} steps above. Output a JSON object with a "results" array of exactly {n} items (one per step, in order) and an "operation_summary_update" string summarising all operations through step {start_idx + n}.
+
+Each item in "results": {{"correctness":"...","correctness_reason":"...","justification_quality":"...","justification_issues":[...],"rewritten_justification":"... or null","flags":[...]}}
+"""
+
+    content = [{"type": "text", "text": user_text}]
+    for img_b64 in batch_images:
+        if img_b64:
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
+            })
+
+    messages = [
+        {"role": "system", "content": AI_CHECK_SYSTEM_PROMPT},
+        {"role": "user", "content": content}
+    ]
+
+    for attempt in range(3):
+        try:
+            response_text = _call_gemini(messages)
+            result = _parse_ai_response(response_text)
+            if result and isinstance(result, dict):
+                results_list = result.get('results', [])
+                summary = result.get('operation_summary_update', running_summary)
+                if isinstance(results_list, list) and len(results_list) >= n:
+                    return results_list[:n], summary
+                # If model returned fewer results, pad with unknowns
+                if isinstance(results_list, list) and len(results_list) > 0:
+                    while len(results_list) < n:
+                        results_list.append({
+                            'correctness': 'unknown', 'correctness_reason': 'Not evaluated in batch',
+                            'justification_quality': 'unknown', 'justification_issues': [],
+                            'rewritten_justification': None, 'flags': [],
+                        })
+                    return results_list[:n], summary
+            logger.warning(f"AI batch {start_idx}: parse attempt {attempt+1} failed, got: {str(result)[:200]}")
+        except Exception as e:
+            logger.warning(f"AI batch {start_idx}: attempt {attempt+1} error: {e}")
+    return None
+
+
+def _run_ai_check_thread(ann_key, oss_folder, folder_name):
+    """Background thread that runs AI quality check using batched API calls.
+    Sends AI_CHECK_BATCH_SIZE steps per API call to minimise latency."""
+    try:
+        local_dir = OSS_CACHE_DIR / folder_name
+        task_data = load_oss_task_data(local_dir)
+        if not task_data:
+            with _ai_check_lock:
+                _ai_check_tasks[ann_key] = {'status': 'failed', 'error': 'Could not load task data'}
+            return
+
+        # Apply overlay to get current state of steps
+        oss_annotations = load_oss_annotations()
+        ann = oss_annotations.get(ann_key, {})
+        justification_edits = ann.get('justification_edits', {})
+        deleted_steps = set(ann.get('deleted_steps', []))
+
+        steps = task_data.get('steps', [])
+        for step in steps:
+            step['original_index'] = step['index']
+            si = str(step['index'])
+            if si in justification_edits:
+                step['justification'] = justification_edits[si]
+        steps = [s for s in steps if s['original_index'] not in deleted_steps]
+
+        # Get query and instructions
+        info = task_data.get('annotator_info', {})
+        query = ann.get('query', '') or info.get('query', '')
+        instructions = ann.get('step_by_step_instructions', '') or info.get('step_by_step_instruction', '')
+
+        total_steps = len(steps)
+        with _ai_check_lock:
+            _ai_check_tasks[ann_key] = {
+                'status': 'running',
+                'progress': 0,
+                'total': total_steps,
+                'steps': {},
+            }
+
+        # Find video file
+        video_file = None
+        for f in local_dir.glob('*.mp4'):
+            if 'video_clips' not in str(f):
+                video_file = f
+                break
+
+        # Pre-extract all frames (fast, batched I/O)
+        all_images = []
+        for step in steps:
+            img_b64 = None
+            if video_file:
+                img_b64 = _extract_frame_base64(video_file, step.get('video_time', 0))
+            all_images.append(img_b64)
+
+        running_summary = "This is the first operation. No previous operations yet."
+        batch_size = AI_CHECK_BATCH_SIZE
+        checked = 0
+
+        for batch_start in range(0, total_steps, batch_size):
+            batch_end = min(batch_start + batch_size, total_steps)
+            batch_steps = steps[batch_start:batch_end]
+            batch_images = all_images[batch_start:batch_end]
+
+            batch_result = _check_step_batch(
+                query=query,
+                instructions=instructions,
+                running_summary=running_summary,
+                batch_steps=batch_steps,
+                batch_images=batch_images,
+                total_steps=total_steps,
+                start_idx=batch_start,
+            )
+
+            if batch_result:
+                results_list, new_summary = batch_result
+                running_summary = new_summary
+                for j, step_result in enumerate(results_list):
+                    orig_idx = batch_steps[j].get('original_index', batch_start + j)
+                    with _ai_check_lock:
+                        _ai_check_tasks[ann_key]['steps'][str(orig_idx)] = step_result
+            else:
+                # Batch failed — mark all steps in this batch as unknown
+                for j, step in enumerate(batch_steps):
+                    orig_idx = step.get('original_index', batch_start + j)
+                    with _ai_check_lock:
+                        _ai_check_tasks[ann_key]['steps'][str(orig_idx)] = {
+                            'correctness': 'unknown',
+                            'correctness_reason': 'AI batch check failed after 3 retries',
+                            'justification_quality': 'unknown',
+                            'justification_issues': [],
+                            'rewritten_justification': None,
+                            'flags': [],
+                        }
+
+            checked = batch_end
+            with _ai_check_lock:
+                _ai_check_tasks[ann_key]['progress'] = checked
+
+        # Save completed results to annotations
+        with _ai_check_lock:
+            checked_steps = dict(_ai_check_tasks[ann_key].get('steps', {}))
+        final_results = {
+            'status': 'completed',
+            'checked_at': datetime.utcnow().isoformat() + 'Z',
+            'steps': checked_steps,
+            'overall_summary': running_summary,
+            'total_checked': total_steps,
+        }
+
+        oss_annotations = load_oss_annotations()
+        if ann_key not in oss_annotations:
+            oss_annotations[ann_key] = {}
+        oss_annotations[ann_key]['ai_check_results'] = final_results
+        save_oss_annotations(oss_annotations)
+
+        # Sync to OSS so other servers see the results
+        _sync_overlay_to_oss(oss_folder, folder_name)
+
+        with _ai_check_lock:
+            _ai_check_tasks[ann_key] = final_results
+
+        logger.info(f"AI check completed for {ann_key}: {total_steps} steps in {total_steps // batch_size + 1} batches")
+
+    except Exception as e:
+        logger.error(f"AI check failed for {ann_key}: {e}")
+        with _ai_check_lock:
+            _ai_check_tasks[ann_key] = {'status': 'failed', 'error': str(e)}
 
 
 def load_oss_task_data(local_dir):
@@ -3451,7 +3806,7 @@ OSS_REVIEW_TEMPLATE = '''
         }
         .resolution-info { color: #00d9ff; font-size: 0.8em; font-family: monospace; }
 
-        .nav-buttons { display: flex; gap: 8px; margin-bottom: 10px; }
+        .nav-buttons { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
         .nav-btn {
             padding: 6px 16px; border: 1px solid #444;
             border-radius: 5px; background: #1a1a2e;
@@ -3460,6 +3815,138 @@ OSS_REVIEW_TEMPLATE = '''
         .nav-btn:hover { border-color: #00d9ff; color: #00d9ff; }
         .nav-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .step-counter { color: #888; font-size: 0.85em; display: flex; align-items: center; }
+
+        /* View mode toggle */
+        .view-toggle {
+            display: flex; gap: 4px; margin-left: 12px;
+            background: #16213e; border-radius: 4px; overflow: hidden; border: 1px solid #333;
+        }
+        .view-toggle button {
+            padding: 4px 10px; border: none; background: transparent;
+            color: #888; cursor: pointer; font-size: 0.75em; font-weight: bold; transition: all 0.2s;
+        }
+        .view-toggle button.active { background: #00d9ff; color: #000; }
+        .view-toggle button:hover:not(.active) { color: #ccc; }
+        .page-size-select {
+            padding: 4px 6px; border: 1px solid #444; border-radius: 4px;
+            background: #0d1117; color: #e0e0e0; font-size: 0.8em; margin-left: 8px;
+        }
+
+        /* Grid view */
+        .steps-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .grid-card {
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-radius: 8px;
+            overflow: hidden;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .grid-card:hover { border-color: #00d9ff; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+        .grid-card.selected { border-color: #ffc107; box-shadow: 0 0 10px rgba(255,193,7,0.3); }
+        .grid-card-img {
+            position: relative;
+            background: #000;
+            width: 100%;
+            aspect-ratio: 16/9;
+            overflow: hidden;
+        }
+        .grid-card-img img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        .grid-card-img .grid-marker {
+            position: absolute;
+            width: 20px; height: 20px;
+            border: 2px solid #ff0040;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            box-shadow: 0 0 8px rgba(255,0,64,0.5);
+        }
+        .grid-card-img .grid-marker::before {
+            content: '';
+            position: absolute; top: 50%; left: 50%;
+            width: 4px; height: 4px;
+            background: #ff0040; border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+        .grid-card-img .grid-marker.drag-end { border-color: #00c8ff; box-shadow: 0 0 8px rgba(0,200,255,0.5); }
+        .grid-card-img .grid-marker.drag-end::before { background: #00c8ff; }
+        .grid-card-body { padding: 8px 10px; }
+        .grid-card-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 4px;
+        }
+        .grid-card-step {
+            color: #00d9ff; font-weight: bold; font-size: 0.85em;
+        }
+        .grid-card-action {
+            background: #252542; padding: 2px 8px; border-radius: 10px;
+            font-size: 0.72em; color: #ccc;
+        }
+        .grid-card-code {
+            background: #0d1117; padding: 4px 6px; border-radius: 3px;
+            font-family: monospace; font-size: 0.72em; color: #7ee787;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            margin-bottom: 4px;
+        }
+        .grid-card-justification {
+            color: #ffc107; font-size: 0.72em;
+            border-left: 2px solid #ffc107; padding-left: 6px;
+            max-height: 36px; overflow: hidden; text-overflow: ellipsis;
+        }
+        .grid-card-badges { display: flex; gap: 4px; margin-top: 4px; }
+        .grid-card-badges .badge {
+            font-size: 0.65em; padding: 1px 5px; border-radius: 3px; font-weight: bold;
+        }
+        .grid-card-badges .badge-adjusted { background: #ff9800; color: #000; }
+        .grid-card-badges .badge-deleted { background: #f44336; color: #fff; }
+        .grid-page-nav {
+            display: flex; align-items: center; justify-content: center;
+            gap: 8px; margin-bottom: 12px;
+        }
+        .grid-page-btn {
+            padding: 6px 16px; border: 1px solid #444;
+            border-radius: 5px; background: #1a1a2e;
+            color: #e0e0e0; cursor: pointer; transition: all 0.2s; font-size: 0.85em;
+        }
+        .grid-page-btn:hover { border-color: #00d9ff; color: #00d9ff; }
+        .grid-page-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .grid-page-info { color: #888; font-size: 0.85em; }
+
+        /* Detail overlay for grid view */
+        .detail-overlay {
+            display: none;
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15,15,26,0.92);
+            z-index: 500;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        .detail-overlay.show { display: block; }
+        .detail-overlay-content {
+            max-width: 1100px; margin: 0 auto;
+            background: #1a1a2e; border-radius: 10px;
+            border: 1px solid #333; overflow: hidden;
+        }
+        .detail-overlay-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 10px 16px; background: #16213e; border-bottom: 1px solid #333;
+        }
+        .detail-overlay-header h3 { color: #00d9ff; font-size: 1em; }
+        .detail-overlay-close {
+            padding: 4px 12px; background: #444; border: none; border-radius: 4px;
+            color: #e0e0e0; cursor: pointer; font-size: 0.85em;
+        }
+        .detail-overlay-close:hover { background: #666; }
+        .detail-overlay-body { padding: 16px; }
 
         .loading-overlay {
             position: fixed;
@@ -3549,6 +4036,186 @@ OSS_REVIEW_TEMPLATE = '''
         }
         .export-case-btn:hover { transform: translateY(-1px); box-shadow: 0 3px 10px rgba(76,175,80,0.3); }
 
+        /* AI Check */
+        .btn-ai-check {
+            padding: 5px 14px;
+            border: 1px solid #9c27b0;
+            border-radius: 4px;
+            background: transparent;
+            color: #ce93d8;
+            cursor: pointer;
+            font-size: 0.8em;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        .btn-ai-check:hover { background: #9c27b0; color: #fff; }
+        .btn-ai-check.running {
+            background: #9c27b0; color: #fff;
+            animation: aipulse 1.5s infinite;
+            cursor: wait;
+        }
+        @keyframes aipulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+        .ai-progress-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.65);
+            z-index: 10000;
+            justify-content: center;
+            align-items: center;
+        }
+        .ai-progress-overlay.show {
+            display: flex;
+        }
+        .ai-progress-card {
+            background: #1a1a2e;
+            border: 1px solid #9c27b0;
+            border-radius: 16px;
+            padding: 36px 48px;
+            min-width: 420px;
+            text-align: center;
+            box-shadow: 0 0 40px rgba(156,39,176,0.3);
+        }
+        .ai-progress-title {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #ce93d8;
+            margin-bottom: 8px;
+        }
+        .ai-progress-subtitle {
+            font-size: 0.85em;
+            color: #888;
+            margin-bottom: 20px;
+        }
+        .ai-progress-bar-track {
+            height: 12px;
+            background: #2a2a3e;
+            border-radius: 6px;
+            overflow: hidden;
+            position: relative;
+            margin-bottom: 14px;
+        }
+        .ai-progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #7b1fa2, #ce93d8, #9c27b0);
+            background-size: 200% 100%;
+            animation: aiBarShimmer 2s linear infinite;
+            transition: width 0.5s ease;
+            border-radius: 6px;
+            min-width: 2%;
+        }
+        @keyframes aiBarShimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+        .ai-progress-stats {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85em;
+            color: #aaa;
+            margin-bottom: 6px;
+        }
+        .ai-progress-pct {
+            font-size: 2.2em;
+            font-weight: bold;
+            color: #e1bee7;
+            margin-bottom: 4px;
+        }
+        .ai-progress-eta {
+            font-size: 0.8em;
+            color: #777;
+            margin-top: 2px;
+        }
+        .ai-progress-issues {
+            margin-top: 14px;
+            padding-top: 12px;
+            border-top: 1px solid #333;
+            font-size: 0.82em;
+            color: #888;
+        }
+        .ai-progress-issues span.issue-count {
+            color: #f44336;
+            font-weight: bold;
+        }
+        .ai-progress-issues span.ok-count {
+            color: #4caf50;
+            font-weight: bold;
+        }
+        .ai-progress-spinner {
+            display: inline-block;
+            width: 18px; height: 18px;
+            border: 2px solid #555;
+            border-top-color: #ce93d8;
+            border-radius: 50%;
+            animation: aispin 0.8s linear infinite;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+        @keyframes aispin {
+            to { transform: rotate(360deg); }
+        }
+        .ai-result {
+            margin-top: 6px;
+            padding: 8px 10px;
+            background: #151530;
+            border-radius: 5px;
+            border: 1px solid #333;
+        }
+        .ai-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; align-items: center; }
+        .ai-badge {
+            padding: 2px 8px; border-radius: 10px;
+            font-size: 0.7em; font-weight: bold;
+            display: inline-block;
+        }
+        .ai-badge.ai-correct { background: rgba(76,175,80,0.2); color: #4caf50; }
+        .ai-badge.ai-wrong { background: rgba(244,67,54,0.25); color: #f44336; }
+        .ai-badge.ai-redundant { background: rgba(255,152,0,0.2); color: #ff9800; }
+        .ai-badge.ai-suspicious { background: rgba(255,193,7,0.2); color: #ffc107; }
+        .ai-badge.ai-unknown { background: rgba(150,150,150,0.15); color: #888; }
+        .ai-badge.ai-good { background: rgba(76,175,80,0.15); color: #81c784; }
+        .ai-badge.ai-acceptable { background: rgba(0,217,255,0.12); color: #4dd0e1; }
+        .ai-badge.ai-poor { background: rgba(244,67,54,0.15); color: #ef9a9a; }
+        .ai-badge.ai-missing { background: rgba(244,67,54,0.2); color: #f44336; }
+        .ai-flag {
+            padding: 1px 6px; border-radius: 8px;
+            font-size: 0.65em; font-weight: bold;
+            background: rgba(156,39,176,0.2); color: #ce93d8;
+        }
+        .ai-reason {
+            color: #bbb; font-size: 0.78em; margin-bottom: 4px;
+            padding-left: 8px; border-left: 2px solid #444;
+        }
+        .ai-issues {
+            font-size: 0.75em; color: #ef9a9a; margin-bottom: 4px;
+        }
+        .ai-issue { margin-bottom: 2px; }
+        .ai-rewrite {
+            background: #1a2e1a; border: 1px solid #2e7d32;
+            border-radius: 4px; padding: 6px 8px; margin-top: 4px;
+        }
+        .ai-rewrite label {
+            color: #66bb6a; font-size: 0.72em; font-weight: bold;
+            display: block; margin-bottom: 3px;
+        }
+        .ai-rewrite-text {
+            color: #a5d6a7; font-size: 0.82em; line-height: 1.4;
+            margin-bottom: 4px;
+        }
+        .ai-apply-btn {
+            padding: 2px 10px; background: #2e7d32; color: #fff;
+            border: none; border-radius: 3px; cursor: pointer;
+            font-size: 0.72em; font-weight: bold;
+        }
+        .ai-apply-btn:hover { background: #4caf50; }
+        /* Grid card AI indicators */
+        .grid-card.ai-wrong { border-color: #f44336; }
+        .grid-card.ai-redundant { border-color: #ff9800; }
+        .grid-card.ai-suspicious { border-color: #ffc107; }
+        .grid-card.ai-correct { border-color: #333; }
+
         /* Reset button */
         .btn-reset {
             padding: 5px 14px;
@@ -3577,6 +4244,10 @@ OSS_REVIEW_TEMPLATE = '''
         <div class="mode-toggle">
             <button id="modeReview" class="active" onclick="setMode('review')">Review</button>
             <button id="modeAnnotation" onclick="setMode('annotation')">Annotate</button>
+        </div>
+        <div id="aiCheckContainer" style="display:flex;align-items:center;gap:6px;">
+            <button class="btn-ai-check" id="aiCheckBtn" onclick="startAiCheck()">AI Check</button>
+            <span id="aiCheckStatus" style="font-size:0.75em;color:#888;"></span>
         </div>
         <button class="btn-reset" onclick="confirmResetCase()">Reset to Original</button>
         <a class="btn-back" href="/dashboard" id="backLink">Dashboard</a>
@@ -3611,19 +4282,40 @@ OSS_REVIEW_TEMPLATE = '''
                 <button class="nav-btn" id="prevBtn" onclick="prevStep()">Prev</button>
                 <span class="step-counter" id="stepCounter">Step 0 / 0</span>
                 <button class="nav-btn" id="nextBtn" onclick="nextStep()">Next</button>
+                <div class="view-toggle">
+                    <button id="viewSingle" class="active" onclick="setViewMode('single')">Single</button>
+                    <button id="viewGrid" onclick="setViewMode('grid')">Grid</button>
+                </div>
+                <select class="page-size-select" id="pageSizeSelect" onchange="changePageSize()" title="Steps per page in grid view">
+                    <option value="10">10/page</option>
+                    <option value="20">20/page</option>
+                    <option value="30" selected>30/page</option>
+                    <option value="50">50/page</option>
+                    <option value="100">100/page</option>
+                </select>
             </div>
 
-            <div id="coordAdjustPanel"></div>
-            <div id="imageInfoBar"></div>
+            <!-- Single step view (default) -->
+            <div id="singleStepView">
+                <div id="coordAdjustPanel"></div>
+                <div id="imageInfoBar"></div>
 
-            <div class="screenshot-container" id="screenshotContainer" onclick="handleImageClick(event)">
-                <img id="screenshot" src="" alt="Screenshot" />
-                <div class="coord-marker" id="coordMarker" style="display:none;"></div>
-                <div class="coord-marker drag-end" id="coordMarkerEnd" style="display:none;"></div>
-                <svg class="drag-line" id="dragLine" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;"><line id="dragLinePath" /><polygon id="dragArrow" /></svg>
+                <div class="screenshot-container" id="screenshotContainer" onclick="handleImageClick(event)">
+                    <img id="screenshot" src="" alt="Screenshot" />
+                    <div class="coord-marker" id="coordMarker" style="display:none;"></div>
+                    <div class="coord-marker drag-end" id="coordMarkerEnd" style="display:none;"></div>
+                    <svg class="drag-line" id="dragLine" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;"><line id="dragLinePath" /><polygon id="dragArrow" /></svg>
+                </div>
+
+                <div class="step-details" id="stepDetails"></div>
             </div>
 
-            <div class="step-details" id="stepDetails"></div>
+            <!-- Grid view (all steps) -->
+            <div id="gridStepView" style="display:none;">
+                <div class="grid-page-nav" id="gridPageNav"></div>
+                <div class="steps-grid" id="stepsGrid"></div>
+                <div class="grid-page-nav" id="gridPageNavBottom"></div>
+            </div>
 
             <div class="panel-review">
                 <div class="review-panel">
@@ -3644,9 +4336,42 @@ OSS_REVIEW_TEMPLATE = '''
         </div>
     </div>
 
+    <!-- AI Check progress overlay -->
+    <div class="ai-progress-overlay" id="aiProgressOverlay">
+        <div class="ai-progress-card">
+            <div class="ai-progress-title"><span class="ai-progress-spinner"></span>AI Quality Check Running</div>
+            <div class="ai-progress-subtitle" id="aiProgressSubtitle">Analyzing steps with Gemini...</div>
+            <div class="ai-progress-pct" id="aiProgressPct">0%</div>
+            <div class="ai-progress-bar-track">
+                <div class="ai-progress-bar-fill" id="aiProgressFill" style="width:0%"></div>
+            </div>
+            <div class="ai-progress-stats">
+                <span id="aiProgressSteps">Step 0 / 0</span>
+                <span id="aiProgressEta">Estimating...</span>
+            </div>
+            <div class="ai-progress-issues" id="aiProgressIssues"></div>
+        </div>
+    </div>
+
+    <!-- Detail overlay for grid card click -->
+    <div class="detail-overlay" id="detailOverlay">
+        <div class="detail-overlay-content">
+            <div class="detail-overlay-header">
+                <h3 id="detailOverlayTitle">Step Detail</h3>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <button class="grid-page-btn" onclick="detailPrev()" id="detailPrevBtn">Prev</button>
+                    <button class="grid-page-btn" onclick="detailNext()" id="detailNextBtn">Next</button>
+                    <button class="detail-overlay-close" onclick="closeDetail()">Close (Esc)</button>
+                </div>
+            </div>
+            <div class="detail-overlay-body" id="detailOverlayBody"></div>
+        </div>
+    </div>
+
     <script>
         let folderName = '{{ folder_name }}';
         const ossFolder = new URLSearchParams(window.location.search).get('folder') || 'recordings_0303';
+        const directMode = new URLSearchParams(window.location.search).get('direct') === '1';
         let taskData = null;
         let currentStep = 0;
         let reviewStatus = 'unreviewed';
@@ -3656,8 +4381,20 @@ OSS_REVIEW_TEMPLATE = '''
         let finetuneActive = false;
         let allRecordings = [];
         let filteredRecordings = [];
+        let viewMode = 'single'; // 'single' or 'grid'
+        let gridPage = 0;
+        let gridPageSize = 30;
+        let detailStepIdx = -1;
 
         document.getElementById('backLink').href = '/dashboard';
+
+        // If direct access mode, hide recording sidebar and AI check
+        if (directMode) {
+            const recSidebar = document.getElementById('recSidebar');
+            if (recSidebar) recSidebar.style.display = 'none';
+            const aiContainer = document.getElementById('aiCheckContainer');
+            if (aiContainer) aiContainer.style.display = 'none';
+        }
 
         // ========== Recording sidebar ==========
 
@@ -3787,6 +4524,16 @@ OSS_REVIEW_TEMPLATE = '''
             finetuneActive = false;
             annotation = {};
             coordAdjustments = {};
+            // Reset AI check state
+            if (aiCheckPolling) { clearInterval(aiCheckPolling); aiCheckPolling = null; }
+            aiCheckResults = null;
+            aiCheckStartTime = null;
+            showAiProgress(false);
+            const aiBtn = document.getElementById('aiCheckBtn');
+            aiBtn.classList.remove('running');
+            aiBtn.textContent = 'AI Check';
+            document.getElementById('aiCheckStatus').textContent = '';
+            document.getElementById('aiCheckStatus').style.color = '#888';
             document.getElementById('loadingOverlay').style.display = 'flex';
             loadTask();
             renderRecordingSidebar();
@@ -3818,6 +4565,11 @@ OSS_REVIEW_TEMPLATE = '''
 
                 annotation = taskData.annotation || {};
                 coordAdjustments = taskData.coord_adjustments || {};
+                // Load AI check results if available
+                if (annotation.ai_check_results && annotation.ai_check_results.status === 'completed') {
+                    aiCheckResults = annotation.ai_check_results;
+                    onAiCheckComplete();
+                }
 
                 // Pre-populate annotation fields from annotator data if annotation is empty
                 const info = taskData.annotator_info || {};
@@ -3863,6 +4615,7 @@ OSS_REVIEW_TEMPLATE = '''
 
                 renderStepSidebar();
                 renderStep(0);
+                if (viewMode === 'grid') renderGrid();
 
                 document.getElementById('loadingOverlay').style.display = 'none';
             } catch (err) {
@@ -3878,9 +4631,17 @@ OSS_REVIEW_TEMPLATE = '''
             const steps = taskData.steps || [];
             let html = '<div class="step-sidebar-header">Steps (' + steps.length + ')</div>';
             steps.forEach((step, i) => {
-                html += '<div class="step-item' + (i === 0 ? ' active' : '') + '" onclick="selectStep(' + i + ')" id="step-' + i + '">' +
+                const origIdx = step.original_index != null ? step.original_index : i;
+                const aiR = getAiStepResult(origIdx);
+                let aiDot = '';
+                if (aiR) {
+                    const dotColor = {correct:'#4caf50', wrong:'#f44336', redundant:'#ff9800', suspicious:'#ffc107'}[aiR.correctness] || '#888';
+                    aiDot = '<span style="width:6px;height:6px;border-radius:50%;background:' + dotColor + ';display:inline-block;margin-left:4px;flex-shrink:0;"></span>';
+                }
+                html += '<div class="step-item' + (i === 0 ? ' active' : '') + '" onclick="selectStep(' + i + ')" id="step-' + i + '" style="display:flex;align-items:center;">' +
                     '<span class="step-num">' + i + '</span> ' +
-                    '<span class="step-action">' + (step.action || '') + '</span>' +
+                    '<span class="step-action" style="flex:1;">' + (step.action || '') + '</span>' +
+                    aiDot +
                     '</div>';
             });
             document.getElementById('stepSidebar').innerHTML = html;
@@ -4003,6 +4764,8 @@ OSS_REVIEW_TEMPLATE = '''
             dHtml += '<label style="color:#888;font-size:0.78em;display:block;margin-bottom:3px;">Justification:</label>';
             dHtml += '<textarea class="justification-input" id="justification-edit" onchange="saveJustification(' + idx + ', this.value)" placeholder="Step justification...">' + (step.justification || '') + '</textarea>';
             dHtml += '</div>';
+            // AI check results
+            dHtml += renderAiResultHtml(origIdx);
             document.getElementById('stepDetails').innerHTML = dHtml;
 
             // Coord finetune panel
@@ -4025,6 +4788,241 @@ OSS_REVIEW_TEMPLATE = '''
             window._videoDims = { width: videoWidth, height: videoHeight };
 
             renderAnnotationPanels();
+        }
+
+        // ========== View mode: single / grid ==========
+
+        function setViewMode(mode) {
+            viewMode = mode;
+            document.getElementById('viewSingle').classList.toggle('active', mode === 'single');
+            document.getElementById('viewGrid').classList.toggle('active', mode === 'grid');
+            document.getElementById('singleStepView').style.display = mode === 'single' ? '' : 'none';
+            document.getElementById('gridStepView').style.display = mode === 'grid' ? '' : 'none';
+            // Show/hide single-step nav buttons in single mode
+            document.getElementById('prevBtn').style.display = mode === 'single' ? '' : 'none';
+            document.getElementById('nextBtn').style.display = mode === 'single' ? '' : 'none';
+            document.getElementById('stepCounter').style.display = mode === 'single' ? '' : 'none';
+            document.getElementById('pageSizeSelect').style.display = mode === 'grid' ? '' : 'none';
+            if (mode === 'grid') {
+                gridPage = 0;
+                renderGrid();
+            }
+        }
+
+        function changePageSize() {
+            gridPageSize = parseInt(document.getElementById('pageSizeSelect').value) || 30;
+            gridPage = 0;
+            renderGrid();
+        }
+
+        function renderGrid() {
+            const steps = taskData ? taskData.steps || [] : [];
+            const totalPages = Math.max(1, Math.ceil(steps.length / gridPageSize));
+            if (gridPage >= totalPages) gridPage = totalPages - 1;
+            const start = gridPage * gridPageSize;
+            const end = Math.min(start + gridPageSize, steps.length);
+            const pageSteps = steps.slice(start, end);
+            const videoWidth = taskData ? taskData.video_width || 1920 : 1920;
+            const videoHeight = taskData ? taskData.video_height || 1080 : 1080;
+
+            let html = '';
+            pageSteps.forEach((step, localIdx) => {
+                const globalIdx = start + localIdx;
+                const origIdx = step.original_index != null ? step.original_index : globalIdx;
+                const adj = coordAdjustments[String(origIdx)];
+                const isAdjusted = !!adj;
+                const imgUrl = '/oss_frame/' + encodeURIComponent(folderName) + '/' + step.video_time + '?folder=' + encodeURIComponent(ossFolder);
+
+                // AI check class for card border color
+                const aiR = getAiStepResult(origIdx);
+                let aiCardClass = '';
+                if (aiR) aiCardClass = ' ai-' + (aiR.correctness || 'unknown');
+
+                html += '<div class="grid-card' + aiCardClass + '" data-step="' + globalIdx + '" onclick="openDetail(' + globalIdx + ')">';
+                html += '<div class="grid-card-img" id="grid-img-' + globalIdx + '">';
+                html += '<img src="' + imgUrl + '" loading="lazy" data-step="' + globalIdx + '" />';
+                html += '</div>';
+                html += '<div class="grid-card-body">';
+                html += '<div class="grid-card-header"><span class="grid-card-step">Step ' + globalIdx + '</span>';
+                html += '<span class="grid-card-action">' + (step.action || '') + '</span></div>';
+                if (step.code) html += '<div class="grid-card-code">' + step.code + '</div>';
+                if (step.justification) html += '<div class="grid-card-justification">' + step.justification + '</div>';
+                let badges = '';
+                if (isAdjusted) badges += '<span class="badge badge-adjusted">Adjusted</span>';
+                if (aiR) {
+                    const ccls = {correct:'ai-correct', wrong:'ai-wrong', redundant:'ai-redundant', suspicious:'ai-suspicious'}[aiR.correctness] || 'ai-unknown';
+                    badges += '<span class="badge ai-badge ' + ccls + '">' + (aiR.correctness || '?').toUpperCase() + '</span>';
+                    if (aiR.justification_quality === 'poor' || aiR.justification_quality === 'missing') {
+                        badges += '<span class="badge ai-badge ai-poor">Just:' + aiR.justification_quality.toUpperCase() + '</span>';
+                    }
+                }
+                if (badges) html += '<div class="grid-card-badges">' + badges + '</div>';
+                html += '</div></div>';
+            });
+            document.getElementById('stepsGrid').innerHTML = html;
+
+            // Render coord markers on grid images after images load
+            pageSteps.forEach((step, localIdx) => {
+                const globalIdx = start + localIdx;
+                if (step.has_coordinate && step.coordinate) {
+                    const container = document.getElementById('grid-img-' + globalIdx);
+                    const img = container ? container.querySelector('img') : null;
+                    if (img) {
+                        const addMarkers = function() {
+                            // Remove old markers
+                            container.querySelectorAll('.grid-marker').forEach(m => m.remove());
+                            const scaleX = img.clientWidth / videoWidth;
+                            const scaleY = img.clientHeight / videoHeight;
+                            if (step.action === 'drag' && step.drag_to) {
+                                const m1 = document.createElement('div');
+                                m1.className = 'grid-marker';
+                                m1.style.left = (step.coordinate.x * scaleX) + 'px';
+                                m1.style.top = (step.coordinate.y * scaleY) + 'px';
+                                container.appendChild(m1);
+                                const m2 = document.createElement('div');
+                                m2.className = 'grid-marker drag-end';
+                                m2.style.left = (step.drag_to.x * scaleX) + 'px';
+                                m2.style.top = (step.drag_to.y * scaleY) + 'px';
+                                container.appendChild(m2);
+                            } else {
+                                const m = document.createElement('div');
+                                m.className = 'grid-marker';
+                                m.style.left = (step.coordinate.x * scaleX) + 'px';
+                                m.style.top = (step.coordinate.y * scaleY) + 'px';
+                                container.appendChild(m);
+                            }
+                        };
+                        if (img.complete) addMarkers();
+                        else img.onload = addMarkers;
+                    }
+                }
+            });
+
+            // Page navigation
+            let navHtml = '';
+            if (totalPages > 1) {
+                navHtml += '<button class="grid-page-btn" onclick="gridPrevPage()" ' + (gridPage <= 0 ? 'disabled' : '') + '>Prev Page</button>';
+                navHtml += '<span class="grid-page-info">Page ' + (gridPage + 1) + ' / ' + totalPages + ' (' + steps.length + ' steps)</span>';
+                navHtml += '<button class="grid-page-btn" onclick="gridNextPage()" ' + (gridPage >= totalPages - 1 ? 'disabled' : '') + '>Next Page</button>';
+            } else {
+                navHtml += '<span class="grid-page-info">' + steps.length + ' steps</span>';
+            }
+            document.getElementById('gridPageNav').innerHTML = navHtml;
+            document.getElementById('gridPageNavBottom').innerHTML = navHtml;
+        }
+
+        function gridPrevPage() { if (gridPage > 0) { gridPage--; renderGrid(); } }
+        function gridNextPage() {
+            const steps = taskData ? taskData.steps || [] : [];
+            const totalPages = Math.ceil(steps.length / gridPageSize);
+            if (gridPage < totalPages - 1) { gridPage++; renderGrid(); }
+        }
+
+        // ========== Detail overlay (grid card click) ==========
+
+        function openDetail(idx) {
+            detailStepIdx = idx;
+            renderDetailOverlay(idx);
+            document.getElementById('detailOverlay').classList.add('show');
+        }
+
+        function closeDetail() {
+            document.getElementById('detailOverlay').classList.remove('show');
+            detailStepIdx = -1;
+            // Re-render grid in case justification was edited
+            if (viewMode === 'grid') renderGrid();
+        }
+
+        function detailPrev() {
+            if (detailStepIdx > 0) { detailStepIdx--; renderDetailOverlay(detailStepIdx); }
+        }
+
+        function detailNext() {
+            const steps = taskData ? taskData.steps || [] : [];
+            if (detailStepIdx < steps.length - 1) { detailStepIdx++; renderDetailOverlay(detailStepIdx); }
+        }
+
+        function renderDetailOverlay(idx) {
+            const steps = taskData ? taskData.steps || [] : [];
+            if (idx < 0 || idx >= steps.length) return;
+            const step = steps[idx];
+            const origIdx = step.original_index != null ? step.original_index : idx;
+            const adj = coordAdjustments[String(origIdx)];
+            const isAdjusted = !!adj;
+            const videoWidth = taskData.video_width || 1920;
+            const videoHeight = taskData.video_height || 1080;
+
+            document.getElementById('detailOverlayTitle').textContent = 'Step ' + idx + ': ' + (step.action || '');
+            document.getElementById('detailPrevBtn').disabled = idx <= 0;
+            document.getElementById('detailNextBtn').disabled = idx >= steps.length - 1;
+
+            const imgUrl = '/oss_frame/' + encodeURIComponent(folderName) + '/' + step.video_time + '?folder=' + encodeURIComponent(ossFolder);
+
+            let html = '<div style="position:relative;display:inline-block;max-width:100%;background:#000;border-radius:6px;overflow:hidden;margin-bottom:10px;" id="detailImgContainer">';
+            html += '<img id="detailImg" src="' + imgUrl + '" style="max-width:100%;max-height:60vh;display:block;" />';
+            html += '</div>';
+
+            html += '<div class="step-details" style="margin-bottom:10px;">';
+            html += '<h4>Step ' + idx + ': ' + (step.action || '');
+            if (isAdjusted) html += ' <span class="adjusted-badge">Adjusted</span>';
+            html += ' <button class="delete-step-btn" onclick="confirmDeleteStep(' + idx + ')" title="Delete this step">Delete Step</button>';
+            html += '</h4>';
+            html += '<div class="code">' + (step.code || '') + '</div>';
+            if (step.has_coordinate) {
+                html += '<div style="margin-bottom:6px;font-size:0.85em;">Coord: (' + step.coordinate.x + ', ' + step.coordinate.y + ')';
+                if (isAdjusted) {
+                    const orig = adj.original || step.coordinate;
+                    html += ' <span class="original-coord">(' + orig.x + ', ' + orig.y + ')</span>';
+                }
+                html += '</div>';
+            }
+            if (step.description) html += '<div class="description">' + step.description + '</div>';
+            html += '<div class="justification-edit-area">';
+            html += '<label style="color:#888;font-size:0.78em;display:block;margin-bottom:3px;">Justification:</label>';
+            html += '<textarea class="justification-input" onchange="saveJustification(' + idx + ', this.value)" placeholder="Step justification...">' + (step.justification || '') + '</textarea>';
+            html += '</div>';
+            // AI check results in detail overlay
+            html += renderAiResultHtml(origIdx);
+            html += '</div>';
+
+            document.getElementById('detailOverlayBody').innerHTML = html;
+
+            // Add markers to detail image
+            const detailImg = document.getElementById('detailImg');
+            if (detailImg && step.has_coordinate && step.coordinate) {
+                const addMarkers = function() {
+                    const container = document.getElementById('detailImgContainer');
+                    container.querySelectorAll('.coord-marker').forEach(m => m.remove());
+                    const scaleX = detailImg.clientWidth / videoWidth;
+                    const scaleY = detailImg.clientHeight / videoHeight;
+                    if (step.action === 'drag' && step.drag_to) {
+                        const m1 = document.createElement('div');
+                        m1.className = 'coord-marker';
+                        m1.setAttribute('data-label', 'from (' + step.coordinate.x + ',' + step.coordinate.y + ')');
+                        m1.style.left = (step.coordinate.x * scaleX) + 'px';
+                        m1.style.top = (step.coordinate.y * scaleY) + 'px';
+                        m1.style.display = 'block';
+                        container.appendChild(m1);
+                        const m2 = document.createElement('div');
+                        m2.className = 'coord-marker drag-end';
+                        m2.setAttribute('data-label', 'to (' + step.drag_to.x + ',' + step.drag_to.y + ')');
+                        m2.style.left = (step.drag_to.x * scaleX) + 'px';
+                        m2.style.top = (step.drag_to.y * scaleY) + 'px';
+                        m2.style.display = 'block';
+                        container.appendChild(m2);
+                    } else {
+                        const m = document.createElement('div');
+                        m.className = 'coord-marker';
+                        m.setAttribute('data-label', step.action + ' (' + step.coordinate.x + ',' + step.coordinate.y + ')');
+                        m.style.left = (step.coordinate.x * scaleX) + 'px';
+                        m.style.top = (step.coordinate.y * scaleY) + 'px';
+                        m.style.display = 'block';
+                        container.appendChild(m);
+                    }
+                };
+                if (detailImg.complete && detailImg.naturalWidth > 0) addMarkers();
+                else detailImg.onload = addMarkers;
+            }
         }
 
         // ========== Annotation panels ==========
@@ -4268,6 +5266,11 @@ OSS_REVIEW_TEMPLATE = '''
                     } else {
                         document.getElementById('stepDetails').innerHTML = '<div style="padding:20px;color:#888;">No steps remaining</div>';
                     }
+                    // Close detail overlay and refresh grid if in grid mode
+                    if (document.getElementById('detailOverlay').classList.contains('show')) {
+                        closeDetail();
+                    }
+                    if (viewMode === 'grid') renderGrid();
                 }
             } catch (err) { console.error('Delete step failed:', err); }
         }
@@ -4316,6 +5319,14 @@ OSS_REVIEW_TEMPLATE = '''
                 annotation = {};
                 coordAdjustments = {};
                 reviewStatus = 'unreviewed';
+                // Reset AI check state
+                if (aiCheckPolling) { clearInterval(aiCheckPolling); aiCheckPolling = null; }
+                aiCheckResults = null;
+                aiCheckStartTime = null;
+                showAiProgress(false);
+                document.getElementById('aiCheckBtn').classList.remove('running');
+                document.getElementById('aiCheckBtn').textContent = 'AI Check';
+                document.getElementById('aiCheckStatus').textContent = '';
                 updateReviewUI();
                 document.getElementById('loadingOverlay').style.display = 'flex';
                 await loadTask();
@@ -4400,6 +5411,195 @@ OSS_REVIEW_TEMPLATE = '''
             updateMarkerPreview();
         }
 
+        // ========== AI Check ==========
+
+        let aiCheckResults = null; // { status, steps: { origIdx: {...} }, ... }
+        let aiCheckPolling = null;
+        let aiCheckStartTime = null;
+
+        function showAiProgress(show) {
+            document.getElementById('aiProgressOverlay').classList.toggle('show', show);
+        }
+
+        function updateAiProgress(progress, total, steps) {
+            const pct = total > 0 ? Math.round(progress / total * 100) : 0;
+            document.getElementById('aiProgressPct').textContent = pct + '%';
+            document.getElementById('aiProgressFill').style.width = pct + '%';
+            document.getElementById('aiProgressSteps').textContent = 'Step ' + progress + ' / ' + total;
+
+            // ETA calculation
+            if (aiCheckStartTime && progress > 0) {
+                const elapsed = (Date.now() - aiCheckStartTime) / 1000;
+                const perStep = elapsed / progress;
+                const remaining = Math.round(perStep * (total - progress));
+                if (remaining > 60) {
+                    document.getElementById('aiProgressEta').textContent = 'Est. ' + Math.ceil(remaining / 60) + ' min remaining';
+                } else if (remaining > 0) {
+                    document.getElementById('aiProgressEta').textContent = 'Est. ' + remaining + 's remaining';
+                } else {
+                    document.getElementById('aiProgressEta').textContent = 'Almost done...';
+                }
+            } else {
+                document.getElementById('aiProgressEta').textContent = 'Estimating...';
+            }
+
+            // Live issue counter
+            let issues = 0, ok = 0;
+            if (steps) {
+                Object.values(steps).forEach(s => {
+                    if (s.correctness === 'wrong' || s.correctness === 'redundant' || s.correctness === 'suspicious') issues++;
+                    else if (s.correctness === 'correct') ok++;
+                    if (s.justification_quality === 'poor' || s.justification_quality === 'missing') issues++;
+                });
+            }
+            const issuesDiv = document.getElementById('aiProgressIssues');
+            if (progress > 0) {
+                issuesDiv.innerHTML = '<span class="ok-count">' + ok + '</span> steps OK &nbsp;&middot;&nbsp; <span class="issue-count">' + issues + '</span> issues found so far';
+            } else {
+                issuesDiv.innerHTML = '';
+            }
+        }
+
+        function startAiCheck(force) {
+            const btn = document.getElementById('aiCheckBtn');
+            btn.classList.add('running');
+            btn.textContent = 'Checking...';
+            document.getElementById('aiCheckStatus').textContent = '';
+            aiCheckStartTime = Date.now();
+
+            fetch('/api/oss/ai_check', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    folder_name: folderName, oss_folder: ossFolder, force: !!force
+                })
+            }).then(r => r.json()).then(data => {
+                if (data.status === 'already_completed' && !force) {
+                    aiCheckResults = data.results;
+                    onAiCheckComplete();
+                    return;
+                }
+                // Show overlay and start polling
+                showAiProgress(true);
+                updateAiProgress(0, data.total || 0, null);
+                document.getElementById('aiProgressSubtitle').textContent =
+                    'Analyzing ' + (data.total || '?') + ' steps with Gemini (batch size ' + (data.batch_size || 5) + ')...';
+                aiCheckPolling = setInterval(pollAiCheck, 1500);
+            }).catch(err => {
+                btn.classList.remove('running');
+                btn.textContent = 'AI Check';
+                document.getElementById('aiCheckStatus').textContent = 'Error: ' + err.message;
+            });
+        }
+
+        function pollAiCheck() {
+            fetch('/api/oss/ai_check_status?folder_name=' + encodeURIComponent(folderName) + '&folder=' + encodeURIComponent(ossFolder))
+            .then(r => r.json()).then(data => {
+                if (data.status === 'running') {
+                    updateAiProgress(data.progress, data.total, data.steps);
+                    // Update partial results live
+                    if (data.steps) {
+                        if (!aiCheckResults) aiCheckResults = { status: 'running', steps: {} };
+                        aiCheckResults.steps = data.steps;
+                        refreshAiDisplay();
+                    }
+                } else if (data.status === 'completed') {
+                    clearInterval(aiCheckPolling);
+                    aiCheckPolling = null;
+                    aiCheckResults = data;
+                    onAiCheckComplete();
+                } else if (data.status === 'failed') {
+                    clearInterval(aiCheckPolling);
+                    aiCheckPolling = null;
+                    showAiProgress(false);
+                    document.getElementById('aiCheckBtn').classList.remove('running');
+                    document.getElementById('aiCheckBtn').textContent = 'AI Check (Failed)';
+                    document.getElementById('aiCheckStatus').textContent = data.error || 'Check failed';
+                }
+            });
+        }
+
+        function onAiCheckComplete() {
+            showAiProgress(false);
+            const btn = document.getElementById('aiCheckBtn');
+            btn.classList.remove('running');
+            btn.textContent = 'AI Check \u2713';
+            // Count issues
+            let issues = 0;
+            const steps = (aiCheckResults && aiCheckResults.steps) || {};
+            Object.values(steps).forEach(s => {
+                if (s.correctness === 'wrong' || s.correctness === 'redundant' || s.correctness === 'suspicious') issues++;
+                if (s.justification_quality === 'poor' || s.justification_quality === 'missing') issues++;
+            });
+            document.getElementById('aiCheckStatus').textContent = issues > 0 ? issues + ' issues found' : 'All OK';
+            document.getElementById('aiCheckStatus').style.color = issues > 0 ? '#ff9800' : '#4caf50';
+            refreshAiDisplay();
+        }
+
+        function refreshAiDisplay() {
+            // Re-render current view to show AI results
+            if (viewMode === 'single') {
+                renderStep(currentStep);
+            } else {
+                renderGrid();
+            }
+            renderStepSidebar();
+        }
+
+        function getAiStepResult(origIdx) {
+            if (!aiCheckResults || !aiCheckResults.steps) return null;
+            return aiCheckResults.steps[String(origIdx)] || null;
+        }
+
+        function renderAiResultHtml(origIdx) {
+            const r = getAiStepResult(origIdx);
+            if (!r) return '';
+
+            const ccls = {correct:'ai-correct', wrong:'ai-wrong', redundant:'ai-redundant', suspicious:'ai-suspicious'}[r.correctness] || 'ai-unknown';
+            const qcls = {good:'ai-good', acceptable:'ai-acceptable', poor:'ai-poor', missing:'ai-missing'}[r.justification_quality] || 'ai-unknown';
+
+            let html = '<div class="ai-result">';
+            html += '<div class="ai-badges">';
+            html += '<span class="ai-badge ' + ccls + '">AI: ' + (r.correctness || 'unknown').toUpperCase() + '</span>';
+            html += '<span class="ai-badge ' + qcls + '">Justification: ' + (r.justification_quality || 'unknown').toUpperCase() + '</span>';
+            if (r.flags && r.flags.length > 0) {
+                r.flags.forEach(function(f) { html += '<span class="ai-flag">' + f + '</span>'; });
+            }
+            html += '</div>';
+            if (r.correctness_reason) {
+                html += '<div class="ai-reason">' + r.correctness_reason + '</div>';
+            }
+            if (r.justification_issues && r.justification_issues.length > 0) {
+                html += '<div class="ai-issues">';
+                r.justification_issues.forEach(function(issue) { html += '<div class="ai-issue">\u2022 ' + issue + '</div>'; });
+                html += '</div>';
+            }
+            if (r.rewritten_justification) {
+                html += '<div class="ai-rewrite"><label>AI Suggested Rewrite:</label>';
+                html += '<div class="ai-rewrite-text">' + r.rewritten_justification + '</div>';
+                html += '<button class="ai-apply-btn" onclick="applyAiRewrite(' + origIdx + ')">Apply This</button>';
+                html += '</div>';
+            }
+            html += '</div>';
+            return html;
+        }
+
+        function applyAiRewrite(origIdx) {
+            const r = getAiStepResult(origIdx);
+            if (!r || !r.rewritten_justification) return;
+            // Find the step by original_index
+            const steps = taskData ? taskData.steps || [] : [];
+            const stepIdx = steps.findIndex(s => (s.original_index != null ? s.original_index : s.index) === origIdx);
+            if (stepIdx < 0) return;
+            steps[stepIdx].justification = r.rewritten_justification;
+            saveJustification(stepIdx, r.rewritten_justification);
+            // Re-render
+            if (viewMode === 'single') renderStep(currentStep);
+            if (document.getElementById('detailOverlay').classList.contains('show')) {
+                renderDetailOverlay(detailStepIdx);
+            }
+        }
+
         // ========== Navigation ==========
 
         function prevStep() { if (currentStep > 0) selectStep(currentStep - 1); }
@@ -4432,8 +5632,21 @@ OSS_REVIEW_TEMPLATE = '''
         // Keyboard shortcuts
         document.addEventListener('keydown', function(e) {
             if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+            // Esc closes detail overlay
+            if (e.key === 'Escape' && document.getElementById('detailOverlay').classList.contains('show')) {
+                closeDetail();
+                return;
+            }
+            // Arrow keys in detail overlay navigate steps
+            if (document.getElementById('detailOverlay').classList.contains('show')) {
+                if (e.key === 'ArrowLeft') detailPrev();
+                if (e.key === 'ArrowRight') detailNext();
+                return;
+            }
             if (e.key === 'ArrowLeft') prevStep();
             if (e.key === 'ArrowRight') nextStep();
+            // 'g' toggles grid view
+            if (e.key === 'g') setViewMode(viewMode === 'grid' ? 'single' : 'grid');
             if (currentMode === 'annotation') {
                 if (e.key === '1') setMark('pass');
                 if (e.key === '2') setMark('fail');
@@ -4442,7 +5655,9 @@ OSS_REVIEW_TEMPLATE = '''
         });
 
         // ========== Init ==========
-        loadRecordingSidebar();
+        // Hide page size selector by default (shown when grid mode is selected)
+        document.getElementById('pageSizeSelect').style.display = 'none';
+        if (!directMode) loadRecordingSidebar();
         loadTask();
     </script>
 </body>
@@ -5235,10 +6450,355 @@ def api_oss_export_progress():
     return jsonify({'total': total, 'cached': cached})
 
 
+@app.route('/api/oss/ai_check', methods=['POST'])
+def api_oss_ai_check():
+    """Start AI quality check for a recording. Runs in background thread."""
+    data = request.json
+    folder_name = data.get('folder_name', '')
+    oss_folder = data.get('oss_folder', 'recordings_0303')
+    force = data.get('force', False)
+    ann_key = f"{oss_folder}/{folder_name}"
+
+    # Check if already running
+    with _ai_check_lock:
+        task = _ai_check_tasks.get(ann_key)
+        if task and task.get('status') == 'running':
+            return jsonify({'status': 'already_running', 'progress': task.get('progress', 0), 'total': task.get('total', 0)})
+
+    # Check if already completed (skip re-run unless forced)
+    if not force:
+        oss_annotations = load_oss_annotations()
+        ann = oss_annotations.get(ann_key, {})
+        ai_results = ann.get('ai_check_results', {})
+        if ai_results.get('status') == 'completed':
+            return jsonify({'status': 'already_completed', 'results': ai_results})
+
+    # Ensure data is cached locally first
+    local_dir = OSS_CACHE_DIR / folder_name
+    if not local_dir.exists() or not (local_dir / 'reduced_events_complete.jsonl').exists():
+        try:
+            import oss_client
+            prefix = oss_folder.rstrip('/') + '/' + folder_name
+            local_dir.mkdir(parents=True, exist_ok=True)
+            oss_client.download_recording_metadata_files(prefix, str(local_dir))
+            oss_client.download_video(prefix, str(local_dir))
+        except Exception as e:
+            return jsonify({'status': 'failed', 'error': f'Could not download recording: {e}'}), 500
+
+    # Count total steps for progress display
+    total_steps = 0
+    try:
+        task_data = load_oss_task_data(local_dir)
+        if task_data:
+            oss_annotations = load_oss_annotations()
+            ann = oss_annotations.get(ann_key, {})
+            deleted_steps = set(ann.get('deleted_steps', []))
+            total_steps = sum(1 for s in task_data.get('steps', []) if s.get('index', 0) not in deleted_steps)
+    except Exception:
+        pass
+
+    # Start background thread
+    thread = threading.Thread(target=_run_ai_check_thread, args=(ann_key, oss_folder, folder_name), daemon=True)
+    thread.start()
+
+    return jsonify({'status': 'started', 'total': total_steps, 'batch_size': AI_CHECK_BATCH_SIZE})
+
+
+@app.route('/api/oss/ai_check_status')
+def api_oss_ai_check_status():
+    """Get current status of AI check for a recording."""
+    folder_name = request.args.get('folder_name', '')
+    oss_folder = request.args.get('folder', 'recordings_0303')
+    ann_key = f"{oss_folder}/{folder_name}"
+
+    # Check running task first
+    with _ai_check_lock:
+        task = _ai_check_tasks.get(ann_key)
+        if task and task.get('status') == 'running':
+            return jsonify(task)
+
+    # Check completed in-memory cache
+    with _ai_check_lock:
+        task = _ai_check_tasks.get(ann_key)
+        if task and task.get('status') in ('completed', 'failed'):
+            return jsonify(task)
+
+    # Check saved results in annotations
+    oss_annotations = load_oss_annotations()
+    ann = oss_annotations.get(ann_key, {})
+    ai_results = ann.get('ai_check_results')
+    if ai_results:
+        return jsonify(ai_results)
+
+    return jsonify({'status': 'not_started'})
+
+
 @app.route('/oss_review/<path:folder_name>')
 def oss_review_page(folder_name):
     """Review page for a single OSS recording."""
     return render_template_string(OSS_REVIEW_TEMPLATE, folder_name=folder_name)
+
+
+# ============================================================================
+# Direct Access Page - Limited access for annotators to fix specific cases
+# ============================================================================
+
+DIRECT_ACCESS_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Case Editor - Direct Access</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f1a;
+            color: #e0e0e0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .access-card {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 32px 40px;
+            max-width: 480px;
+            width: 90%;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+        }
+        .access-card h1 {
+            color: #00d9ff;
+            font-size: 1.4em;
+            margin-bottom: 6px;
+            text-align: center;
+        }
+        .access-card .subtitle {
+            color: #888;
+            font-size: 0.85em;
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        .form-group {
+            margin-bottom: 16px;
+        }
+        .form-group label {
+            display: block;
+            color: #888;
+            font-size: 0.82em;
+            margin-bottom: 4px;
+            font-weight: bold;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 10px 14px;
+            border: 1px solid #444;
+            border-radius: 6px;
+            background: #0d1117;
+            color: #e0e0e0;
+            font-size: 0.95em;
+            transition: border-color 0.2s;
+        }
+        .form-group input:focus {
+            border-color: #00d9ff;
+            outline: none;
+        }
+        .form-group input::placeholder { color: #555; }
+        .form-group .hint {
+            color: #666;
+            font-size: 0.72em;
+            margin-top: 3px;
+        }
+        .submit-btn {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #00d9ff 0%, #0088cc 100%);
+            border: none;
+            border-radius: 6px;
+            color: #000;
+            font-weight: bold;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 8px;
+        }
+        .submit-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(0,217,255,0.3); }
+        .submit-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .error-msg {
+            color: #f44336;
+            font-size: 0.85em;
+            text-align: center;
+            margin-top: 12px;
+            display: none;
+        }
+        .info-box {
+            background: #0d1117;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 12px 14px;
+            margin-top: 20px;
+            font-size: 0.8em;
+            color: #888;
+            line-height: 1.5;
+        }
+        .info-box b { color: #ffc107; }
+    </style>
+</head>
+<body>
+    <div class="access-card">
+        <h1>Case Editor</h1>
+        <div class="subtitle">Direct access to view and edit a specific recording case</div>
+
+        <div class="form-group">
+            <label>OSS Folder</label>
+            <input type="text" id="ossFolder" placeholder="e.g. recordings_0303" value="{{ default_folder }}" />
+            <div class="hint">The OSS recording folder name</div>
+        </div>
+
+        <div class="form-group">
+            <label>Case ID (Folder Name)</label>
+            <input type="text" id="caseId" placeholder="e.g. 20250101-120000_task1_user1_rec001" value="{{ case_id }}" />
+            <div class="hint">The full recording folder name on OSS</div>
+        </div>
+
+        <div class="form-group">
+            <label>Username (for verification)</label>
+            <input type="text" id="username" placeholder="Your annotator username" value="{{ username }}" />
+            <div class="hint">Must match the annotator who created this recording</div>
+        </div>
+
+        <button class="submit-btn" id="submitBtn" onclick="openCase()">Open Case</button>
+        <div class="error-msg" id="errorMsg"></div>
+
+        <div class="info-box">
+            <b>Note:</b> This page provides limited access to a single recording case for review and editing.
+            You can only access cases assigned to your username. After making corrections, your changes
+            are saved automatically.
+        </div>
+    </div>
+
+    <script>
+        // Auto-fill from URL params
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('folder')) document.getElementById('ossFolder').value = params.get('folder');
+        if (params.get('case')) document.getElementById('caseId').value = params.get('case');
+        if (params.get('user')) document.getElementById('username').value = params.get('user');
+
+        async function openCase() {
+            const folder = document.getElementById('ossFolder').value.trim();
+            const caseId = document.getElementById('caseId').value.trim();
+            const username = document.getElementById('username').value.trim();
+            const errEl = document.getElementById('errorMsg');
+
+            if (!folder || !caseId || !username) {
+                errEl.textContent = 'All fields are required.';
+                errEl.style.display = 'block';
+                return;
+            }
+
+            const btn = document.getElementById('submitBtn');
+            btn.disabled = true;
+            btn.textContent = 'Verifying...';
+            errEl.style.display = 'none';
+
+            try {
+                // Verify the case exists and username matches
+                const resp = await fetch('/api/oss/verify_access?folder=' + encodeURIComponent(folder) +
+                    '&case=' + encodeURIComponent(caseId) +
+                    '&user=' + encodeURIComponent(username));
+                const data = await resp.json();
+
+                if (data.error) {
+                    errEl.textContent = data.error;
+                    errEl.style.display = 'block';
+                    btn.disabled = false;
+                    btn.textContent = 'Open Case';
+                    return;
+                }
+
+                if (!data.access_granted) {
+                    errEl.textContent = 'Access denied. Username does not match the recording annotator.';
+                    errEl.style.display = 'block';
+                    btn.disabled = false;
+                    btn.textContent = 'Open Case';
+                    return;
+                }
+
+                // Redirect to the review page in direct mode
+                window.location.href = '/oss_review/' + encodeURIComponent(caseId) +
+                    '?folder=' + encodeURIComponent(folder) + '&direct=1';
+            } catch (err) {
+                errEl.textContent = 'Connection error: ' + err.message;
+                errEl.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = 'Open Case';
+            }
+        }
+
+        // Submit on Enter key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') openCase();
+        });
+    </script>
+</body>
+</html>
+'''
+
+
+@app.route('/edit')
+def direct_access_page():
+    """Landing page for direct case access by annotators."""
+    default_folder = request.args.get('folder', '')
+    case_id = request.args.get('case', '')
+    username = request.args.get('user', '')
+    return render_template_string(DIRECT_ACCESS_TEMPLATE,
+                                  default_folder=default_folder,
+                                  case_id=case_id,
+                                  username=username)
+
+
+@app.route('/api/oss/verify_access')
+def api_oss_verify_access():
+    """Verify that a user has access to a specific recording case.
+    Checks that the case exists and the username matches the annotator."""
+    folder = request.args.get('folder', '')
+    case_id = request.args.get('case', '')
+    username = request.args.get('user', '')
+
+    if not folder or not case_id or not username:
+        return jsonify({'error': 'Missing required fields: folder, case, user'})
+
+    try:
+        import oss_client
+
+        # Check if the recording exists
+        prefix = folder.rstrip('/') + '/' + case_id
+        metadata = oss_client.get_recording_metadata(prefix)
+
+        if metadata is None:
+            # Try listing to verify the folder exists
+            recordings = oss_client.list_recordings(folder)
+            if case_id not in recordings:
+                return jsonify({'error': 'Case not found: ' + case_id})
+            # No annotator_info.json — allow access by folder name match
+            parsed = oss_client.parse_folder_name_metadata(case_id)
+            actual_username = parsed.get('username', 'Unknown')
+        else:
+            actual_username = metadata.get('username', 'Unknown')
+
+        # Verify username match (case-insensitive)
+        if actual_username.lower() != username.lower() and actual_username != 'Unknown':
+            return jsonify({
+                'error': 'Access denied. This recording belongs to "' + actual_username + '", not "' + username + '".',
+                'access_granted': False
+            })
+
+        return jsonify({'access_granted': True, 'annotator': actual_username})
+
+    except Exception as e:
+        return jsonify({'error': 'Failed to verify access: ' + str(e)})
 
 
 if __name__ == '__main__':
@@ -5267,6 +6827,7 @@ if __name__ == '__main__':
     print(f"OSS cache: {OSS_CACHE_DIR}")
     print(f"\nStarting server at: http://{args.host}:{args.port}")
     print(f"Dashboard: http://{args.host}:{args.port}/dashboard")
+    print(f"Direct access: http://{args.host}:{args.port}/edit")
     print("Press Ctrl+C to stop\n")
 
     app.run(host=args.host, port=args.port, debug=False)
