@@ -4372,6 +4372,7 @@ OSS_REVIEW_TEMPLATE = '''
         let folderName = '{{ folder_name }}';
         const ossFolder = new URLSearchParams(window.location.search).get('folder') || 'recordings_0303';
         const directMode = new URLSearchParams(window.location.search).get('direct') === '1';
+        const AI_CHECK_API_KEY = {{ 'true' if ai_check_available else 'false' }};
         let taskData = null;
         let currentStep = 0;
         let reviewStatus = 'unreviewed';
@@ -4565,10 +4566,13 @@ OSS_REVIEW_TEMPLATE = '''
 
                 annotation = taskData.annotation || {};
                 coordAdjustments = taskData.coord_adjustments || {};
-                // Load AI check results if available
+                // Load AI check results if available, otherwise auto-start (reviewer only)
                 if (annotation.ai_check_results && annotation.ai_check_results.status === 'completed') {
                     aiCheckResults = annotation.ai_check_results;
                     onAiCheckComplete();
+                } else if (!directMode && AI_CHECK_API_KEY) {
+                    // Auto-trigger AI check for new/unchecked cases
+                    setTimeout(() => startAiCheck(false), 500);
                 }
 
                 // Pre-populate annotation fields from annotator data if annotation is empty
@@ -6536,7 +6540,7 @@ def api_oss_ai_check_status():
 @app.route('/oss_review/<path:folder_name>')
 def oss_review_page(folder_name):
     """Review page for a single OSS recording."""
-    return render_template_string(OSS_REVIEW_TEMPLATE, folder_name=folder_name)
+    return render_template_string(OSS_REVIEW_TEMPLATE, folder_name=folder_name, ai_check_available=bool(AI_CHECK_API_KEY))
 
 
 # ============================================================================
