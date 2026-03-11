@@ -4928,21 +4928,34 @@ OSS_REVIEW_TEMPLATE = '''
             container.innerHTML = html;
 
             // Add coordinate markers after images load
-            steps.forEach((step, idx) => {
-                if (!step.has_coordinate || !step.coordinate) return;
-                const imgEl = document.getElementById('stacked-img-el-' + idx);
-                if (!imgEl) return;
-                const addMarkers = function() {
-                    addMarkersToContainer('stacked-img-' + idx, imgEl, step, videoWidth, videoHeight);
-                };
-                if (imgEl.complete && imgEl.naturalWidth > 0) addMarkers();
-                else imgEl.onload = addMarkers;
+            // Use requestAnimationFrame to ensure browser has done layout first
+            requestAnimationFrame(() => {
+                steps.forEach((step, idx) => {
+                    if (!step.has_coordinate || !step.coordinate) return;
+                    const imgEl = document.getElementById('stacked-img-el-' + idx);
+                    if (!imgEl) return;
+                    const addMarkers = function() {
+                        // Guard: if image has no layout dimensions yet, defer again
+                        if (imgEl.clientWidth === 0) {
+                            requestAnimationFrame(() => addMarkersToContainer('stacked-img-' + idx, imgEl, step, videoWidth, videoHeight));
+                            return;
+                        }
+                        addMarkersToContainer('stacked-img-' + idx, imgEl, step, videoWidth, videoHeight);
+                    };
+                    if (imgEl.complete && imgEl.naturalWidth > 0) addMarkers();
+                    else imgEl.onload = addMarkers;
+                });
             });
         }
 
         function addMarkersToContainer(containerId, imgEl, step, videoWidth, videoHeight) {
             const container = document.getElementById(containerId);
             if (!container) return;
+            // If image has no dimensions yet, defer to next frame
+            if (imgEl.clientWidth === 0 || imgEl.clientHeight === 0) {
+                requestAnimationFrame(() => addMarkersToContainer(containerId, imgEl, step, videoWidth, videoHeight));
+                return;
+            }
             container.querySelectorAll('.coord-marker').forEach(m => m.remove());
             const scaleX = imgEl.clientWidth / videoWidth;
             const scaleY = imgEl.clientHeight / videoHeight;
