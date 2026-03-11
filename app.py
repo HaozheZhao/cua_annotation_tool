@@ -38,7 +38,7 @@ _dashboard_cache = {}
 AI_CHECK_API_KEY = os.environ.get('AI_CHECK_API_KEY', '')
 AI_CHECK_BASE_URL = os.environ.get('AI_CHECK_BASE_URL', 'https://openai.sufy.com/v1')
 AI_CHECK_MODEL = os.environ.get('AI_CHECK_MODEL', 'gemini-3.1-flash-lite-preview')
-AI_CHECK_BATCH_SIZE = int(os.environ.get('AI_CHECK_BATCH_SIZE', '5'))
+AI_CHECK_BATCH_SIZE = 1  # Sequential inference for accuracy
 
 # In-memory tracker for running AI checks: { ann_key: {status, progress, total, steps, ...} }
 _ai_check_tasks = {}
@@ -101,11 +101,23 @@ SPECIFIC OPERATION RULES:
 - Type: Text must be relevant to the task goal.
 - PROHIBITED: Shaky clicking (repeated clicks at same position), meaningless back-and-forth, redundant operations, clicks on wrong targets.
 
+VISUAL ANNOTATIONS ON SCREENSHOTS:
+- The screenshot includes RED visual annotations showing the operation:
+  - Click: Red circle at click position. Double-click has double circle + "x2". Right-click has square + "R". Triple-click has triple circle + "x3".
+  - Drag: Red line from start to end with filled arrowhead at end, circle at start.
+  - Scroll: Red arrow showing scroll direction + text label (e.g., "Scroll Down x3").
+- Use these visual annotations to verify the operation target and position.
+
+MISSING JUSTIFICATION HANDLING:
+- If justification is marked as "(NOT PROVIDED - justification is missing)", set justification_quality to "missing".
+- You MUST write a complete justification in rewritten_justification (format: "[Specific reason] to [how it advances the task]").
+- Focus on explaining what the operation does and why it is needed for the task.
+
 =====================================
 OUTPUT FORMAT
 =====================================
 Output ONLY a valid JSON object — no markdown fences, no text before/after:
-{"correctness":"correct|wrong|redundant|suspicious","correctness_reason":"1-2 sentence explanation of why this step is correct/wrong/redundant/suspicious","justification_quality":"good|acceptable|poor|missing","justification_issues":["specific issue 1"],"rewritten_justification":"Improved justification following the [reason] to [necessity] format, or null if quality is good/acceptable","flags":[],"operation_summary_update":"Cumulative 2-4 sentence summary of ALL operations from step 1 through this step, for context in checking the next step"}
+{"correctness":"correct|wrong|redundant|suspicious","correctness_reason":"1-2 sentence explanation of why this step is correct/wrong/redundant/suspicious","reasoning":"2-4 sentences explaining your analysis: what you see in the screenshot, what the operation does, whether it matches the task goal, and why you gave this verdict","justification_quality":"good|acceptable|poor|missing","justification_issues":["specific issue 1"],"rewritten_justification":"Improved justification following the [reason] to [necessity] format, or null if quality is good/acceptable","flags":[],"operation_summary_update":"Cumulative 2-4 sentence summary of ALL operations from step 1 through this step, for context in checking the next step"}
 
 Possible flags (use when applicable): redundant_click, meaningless_scroll, shaky_click, back_and_forth, wrong_target, unnecessary_step, missing_justification, vague_justification"""
 
@@ -257,7 +269,7 @@ def load_task_data(task_id):
         code = build_pyautogui_code(action, ce, description)
 
         # Only show coordinate marker for actions that have meaningful coordinates
-        has_coordinate = action in ('click', 'drag') and (x != 0 or y != 0)
+        has_coordinate = action in ('click', 'drag', 'scroll') and (x != 0 or y != 0)
 
         # Parse drag end coordinates
         drag_to = None
@@ -265,6 +277,29 @@ def load_task_data(task_id):
             drag_match = re.search(r'Drag from \((\d+),\s*(\d+)\) to \((\d+),\s*(\d+)\)', description)
             if drag_match:
                 drag_to = {'x': int(drag_match.group(3)), 'y': int(drag_match.group(4))}
+
+        # Parse scroll direction
+        scroll_info = None
+        if action == 'scroll':
+            down = re.search(r'⬇️×(\d+)', description)
+            up = re.search(r'⬆️×(\d+)', description)
+            left = re.search(r'⬅️×(\d+)', description)
+            right = re.search(r'➡️×(\d+)', description)
+            scroll_info = {'dx': 0, 'dy': 0}
+            if down: scroll_info['dy'] = int(down.group(1))
+            if up: scroll_info['dy'] = -int(up.group(1))
+            if right: scroll_info['dx'] = int(right.group(1))
+            if left: scroll_info['dx'] = -int(left.group(1))
+
+        # Detect click subtype from description/code
+        click_type = 'click'
+        if action == 'click':
+            if 'doubleClick' in code or 'double' in description.lower():
+                click_type = 'doubleClick'
+            elif 'rightClick' in code or 'right' in description.lower():
+                click_type = 'rightClick'
+            elif 'clicks=3' in code or 'triple' in description.lower():
+                click_type = 'tripleClick'
 
         steps.append({
             'index': i,
@@ -275,6 +310,8 @@ def load_task_data(task_id):
             'coordinate': {'x': x, 'y': y},
             'has_coordinate': has_coordinate,
             'drag_to': drag_to,
+            'scroll_info': scroll_info,
+            'click_type': click_type,
             'video_time': video_time
         })
 
@@ -445,8 +482,7 @@ def _load_overlay_from_oss(oss_folder, folder_name):
 # ============================================================================
 
 def _extract_frame_base64(video_path, video_time, quality=50, max_width=800):
-    """Extract a frame from video and return as base64 JPEG string.
-    Uses reduced resolution (800px) and quality (50) to minimise API latency and token cost."""
+    """Extract a frame from video and return as base64 JPEG string."""
     try:
         import cv2
     except ImportError:
@@ -465,6 +501,100 @@ def _extract_frame_base64(video_path, video_time, quality=50, max_width=800):
     if w > max_width:
         scale = max_width / w
         frame = cv2.resize(frame, (max_width, int(h * scale)))
+    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    return base64.b64encode(buffer.tobytes()).decode('utf-8')
+
+
+def _extract_frame_with_annotation(video_path, video_time, step, video_width, video_height, quality=50, max_width=800):
+    """Extract a frame and draw the operation annotation on it (like AgentNet-Tool).
+    This gives the AI model visual context of what operation is being performed."""
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return _extract_frame_base64(video_path, video_time, quality, max_width)
+
+    cap = cv2.VideoCapture(str(video_path))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    frame_num = int(video_time * fps)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    frame_num = max(0, min(frame_num, total_frames - 1))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+    ret, frame = cap.read()
+    cap.release()
+    if not ret:
+        return None
+
+    fh, fw = frame.shape[:2]
+    # Scale coordinates from video_width/video_height to actual frame size
+    sx = fw / (video_width or fw)
+    sy = fh / (video_height or fh)
+
+    action = step.get('action', '')
+    coord = step.get('coordinate', {})
+    x = int(coord.get('x', 0) * sx)
+    y = int(coord.get('y', 0) * sy)
+    color = (0, 0, 255)  # Red in BGR
+
+    if action == 'click':
+        click_type = step.get('click_type', 'click')
+        # Draw circle at click position
+        cv2.circle(frame, (x, y), 15, color, 2)
+        if click_type == 'doubleClick':
+            # Double circle for double click
+            cv2.circle(frame, (x, y), 22, color, 2)
+            cv2.putText(frame, 'x2', (x + 18, y - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        elif click_type == 'rightClick':
+            # Square around circle for right click
+            cv2.rectangle(frame, (x - 18, y - 18), (x + 18, y + 18), color, 2)
+            cv2.putText(frame, 'R', (x + 18, y - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        elif click_type == 'tripleClick':
+            cv2.circle(frame, (x, y), 22, color, 2)
+            cv2.circle(frame, (x, y), 29, color, 2)
+            cv2.putText(frame, 'x3', (x + 18, y - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+    elif action == 'drag':
+        drag_to = step.get('drag_to', {})
+        if drag_to:
+            ex = int(drag_to.get('x', 0) * sx)
+            ey = int(drag_to.get('y', 0) * sy)
+            # Draw line from start to end
+            cv2.line(frame, (x, y), (ex, ey), color, 2)
+            # Arrowhead at end
+            angle = np.arctan2(ey - y, ex - x)
+            a_len = 20
+            tip = (ex, ey)
+            left_wing = (int(ex - a_len * np.cos(angle - 0.4)), int(ey - a_len * np.sin(angle - 0.4)))
+            right_wing = (int(ex - a_len * np.cos(angle + 0.4)), int(ey - a_len * np.sin(angle + 0.4)))
+            cv2.fillPoly(frame, [np.array([tip, left_wing, right_wing], dtype=np.int32)], color)
+            # Start circle
+            cv2.circle(frame, (x, y), 8, color, 2)
+
+    elif action == 'scroll':
+        scroll_info = step.get('scroll_info', {})
+        dy = scroll_info.get('dy', 0) if scroll_info else 0
+        dx = scroll_info.get('dx', 0) if scroll_info else 0
+        arrow_len = 60
+        # Draw scroll arrow at position
+        if dy != 0:
+            end_y = y + (arrow_len if dy > 0 else -arrow_len)
+            cv2.arrowedLine(frame, (x, y), (x, end_y), color, 2, tipLength=0.3)
+            label = f'Scroll {"Down" if dy > 0 else "Up"} x{abs(dy)}'
+        elif dx != 0:
+            end_x = x + (arrow_len if dx > 0 else -arrow_len)
+            cv2.arrowedLine(frame, (x, y), (end_x, y), color, 2, tipLength=0.3)
+            label = f'Scroll {"Right" if dx > 0 else "Left"} x{abs(dx)}'
+        else:
+            cv2.arrowedLine(frame, (x, y), (x, y + arrow_len), color, 2, tipLength=0.3)
+            label = 'Scroll'
+        cv2.putText(frame, label, (x + 15, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+    # Resize after drawing annotations (better quality annotations)
+    h, w = frame.shape[:2]
+    if w > max_width:
+        scale = max_width / w
+        frame = cv2.resize(frame, (max_width, int(h * scale)))
+
     _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
     return base64.b64encode(buffer.tobytes()).decode('utf-8')
 
@@ -514,48 +644,47 @@ def _parse_ai_response(text):
     return None
 
 
-def _check_step_batch(query, instructions, running_summary, batch_steps, batch_images, total_steps, start_idx):
-    """Check a batch of steps in ONE API call. Returns (list_of_results, updated_summary) or None."""
-    n = len(batch_steps)
-    # Build multi-step user prompt — text first, then all images
+def _check_single_step(query, instructions, running_summary, step_idx, step, img_b64, total_steps):
+    """Check a single step using Gemini API with annotated screenshot. Returns (result_dict, updated_summary) or None."""
+    action = step.get('action', '')
+    code = step.get('code', '')
+    description = step.get('description', '')
+    justification = step.get('justification', '')
+    coord = step.get('coordinate', {})
+    has_justification = bool(justification and justification.strip())
+
     user_text = f"""Task Query: {query}
 Task Instructions: {instructions or 'Not provided'}
 
 == Previous Operations Summary ==
 {running_summary}
 
-== Evaluate the following {n} steps (evaluate ALL of them, one result per step) ==
-"""
-    for i, step in enumerate(batch_steps):
-        idx = start_idx + i + 1
-        action = step.get('action', '')
-        code = step.get('code', '')
-        description = step.get('description', '')
-        justification = step.get('justification', '')
-        coord = step.get('coordinate', {})
-        user_text += f"""
---- Step {idx} of {total_steps} ---
+== Current Step {step_idx + 1} of {total_steps} ==
 - Action: {action}
 - Code: {code}
 - Description: {description}
-- Justification: "{justification or '(empty)'}"
+- Justification: "{justification or '(NOT PROVIDED - justification is missing)'}"
 - Coordinate: ({coord.get('x', 0)}, {coord.get('y', 0)})
-[Screenshot #{idx} attached below]
-"""
 
-    user_text += f"""
-Evaluate ALL {n} steps above. Output a JSON object with a "results" array of exactly {n} items (one per step, in order) and an "operation_summary_update" string summarising all operations through step {start_idx + n}.
+[Screenshot attached below — the operation is visually annotated on the screenshot with red markers: circles for clicks, arrows for scroll direction, lines with arrowheads for drag paths]
 
-Each item in "results": {{"correctness":"...","correctness_reason":"...","justification_quality":"...","justification_issues":[...],"rewritten_justification":"... or null","flags":[...]}}
 """
+    if has_justification:
+        user_text += "Evaluate this step's operation correctness and justification quality. Output JSON only."
+    else:
+        user_text += """This step has NO justification provided by the annotator. You must:
+1. Evaluate the operation correctness as usual.
+2. Set justification_quality to "missing".
+3. WRITE a complete justification for this step in rewritten_justification (format: "[Specific reason] to [how it advances the task]").
+4. Explain in correctness_reason what this operation does and whether it makes sense for the task.
+Output JSON only."""
 
     content = [{"type": "text", "text": user_text}]
-    for img_b64 in batch_images:
-        if img_b64:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
-            })
+    if img_b64:
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
+        })
 
     messages = [
         {"role": "system", "content": AI_CHECK_SYSTEM_PROMPT},
@@ -566,29 +695,18 @@ Each item in "results": {{"correctness":"...","correctness_reason":"...","justif
         try:
             response_text = _call_gemini(messages)
             result = _parse_ai_response(response_text)
-            if result and isinstance(result, dict):
-                results_list = result.get('results', [])
+            if result and isinstance(result, dict) and 'correctness' in result:
                 summary = result.get('operation_summary_update', running_summary)
-                if isinstance(results_list, list) and len(results_list) >= n:
-                    return results_list[:n], summary
-                # If model returned fewer results, pad with unknowns
-                if isinstance(results_list, list) and len(results_list) > 0:
-                    while len(results_list) < n:
-                        results_list.append({
-                            'correctness': 'unknown', 'correctness_reason': 'Not evaluated in batch',
-                            'justification_quality': 'unknown', 'justification_issues': [],
-                            'rewritten_justification': None, 'flags': [],
-                        })
-                    return results_list[:n], summary
-            logger.warning(f"AI batch {start_idx}: parse attempt {attempt+1} failed, got: {str(result)[:200]}")
+                return result, summary
+            logger.warning(f"AI check step {step_idx}: parse attempt {attempt+1} failed, response: {response_text[:200]}")
         except Exception as e:
-            logger.warning(f"AI batch {start_idx}: attempt {attempt+1} error: {e}")
+            logger.warning(f"AI check step {step_idx}: API attempt {attempt+1} error: {e}")
     return None
 
 
 def _run_ai_check_thread(ann_key, oss_folder, folder_name):
-    """Background thread that runs AI quality check using batched API calls.
-    Sends AI_CHECK_BATCH_SIZE steps per API call to minimise latency."""
+    """Background thread that runs AI quality check sequentially — one step per API call.
+    Each call includes an annotated screenshot with the operation drawn on it."""
     try:
         local_dir = OSS_CACHE_DIR / folder_name
         task_data = load_oss_task_data(local_dir)
@@ -616,7 +734,10 @@ def _run_ai_check_thread(ann_key, oss_folder, folder_name):
         query = ann.get('query', '') or info.get('query', '')
         instructions = ann.get('step_by_step_instructions', '') or info.get('step_by_step_instruction', '')
 
+        video_width = task_data.get('video_width', 1920)
+        video_height = task_data.get('video_height', 1080)
         total_steps = len(steps)
+
         with _ai_check_lock:
             _ai_check_tasks[ann_key] = {
                 'status': 'running',
@@ -632,57 +753,47 @@ def _run_ai_check_thread(ann_key, oss_folder, folder_name):
                 video_file = f
                 break
 
-        # Pre-extract all frames (fast, batched I/O)
-        all_images = []
-        for step in steps:
+        running_summary = "This is the first operation. No previous operations yet."
+
+        for i, step in enumerate(steps):
+            orig_idx = step.get('original_index', i)
+
+            # Extract frame with operation annotation drawn on it
             img_b64 = None
             if video_file:
-                img_b64 = _extract_frame_base64(video_file, step.get('video_time', 0))
-            all_images.append(img_b64)
+                img_b64 = _extract_frame_with_annotation(
+                    video_file, step.get('video_time', 0), step,
+                    video_width, video_height
+                )
 
-        running_summary = "This is the first operation. No previous operations yet."
-        batch_size = AI_CHECK_BATCH_SIZE
-        checked = 0
-
-        for batch_start in range(0, total_steps, batch_size):
-            batch_end = min(batch_start + batch_size, total_steps)
-            batch_steps = steps[batch_start:batch_end]
-            batch_images = all_images[batch_start:batch_end]
-
-            batch_result = _check_step_batch(
+            result = _check_single_step(
                 query=query,
                 instructions=instructions,
                 running_summary=running_summary,
-                batch_steps=batch_steps,
-                batch_images=batch_images,
+                step_idx=i,
+                step=step,
+                img_b64=img_b64,
                 total_steps=total_steps,
-                start_idx=batch_start,
             )
 
-            if batch_result:
-                results_list, new_summary = batch_result
+            if result:
+                step_result, new_summary = result
                 running_summary = new_summary
-                for j, step_result in enumerate(results_list):
-                    orig_idx = batch_steps[j].get('original_index', batch_start + j)
-                    with _ai_check_lock:
-                        _ai_check_tasks[ann_key]['steps'][str(orig_idx)] = step_result
+                with _ai_check_lock:
+                    _ai_check_tasks[ann_key]['steps'][str(orig_idx)] = step_result
             else:
-                # Batch failed — mark all steps in this batch as unknown
-                for j, step in enumerate(batch_steps):
-                    orig_idx = step.get('original_index', batch_start + j)
-                    with _ai_check_lock:
-                        _ai_check_tasks[ann_key]['steps'][str(orig_idx)] = {
-                            'correctness': 'unknown',
-                            'correctness_reason': 'AI batch check failed after 3 retries',
-                            'justification_quality': 'unknown',
-                            'justification_issues': [],
-                            'rewritten_justification': None,
-                            'flags': [],
-                        }
+                with _ai_check_lock:
+                    _ai_check_tasks[ann_key]['steps'][str(orig_idx)] = {
+                        'correctness': 'unknown',
+                        'correctness_reason': 'AI check failed after 3 retries',
+                        'justification_quality': 'unknown',
+                        'justification_issues': [],
+                        'rewritten_justification': None,
+                        'flags': [],
+                    }
 
-            checked = batch_end
             with _ai_check_lock:
-                _ai_check_tasks[ann_key]['progress'] = checked
+                _ai_check_tasks[ann_key]['progress'] = i + 1
 
         # Save completed results to annotations
         with _ai_check_lock:
@@ -701,13 +812,12 @@ def _run_ai_check_thread(ann_key, oss_folder, folder_name):
         oss_annotations[ann_key]['ai_check_results'] = final_results
         save_oss_annotations(oss_annotations)
 
-        # Sync to OSS so other servers see the results
         _sync_overlay_to_oss(oss_folder, folder_name)
 
         with _ai_check_lock:
             _ai_check_tasks[ann_key] = final_results
 
-        logger.info(f"AI check completed for {ann_key}: {total_steps} steps in {total_steps // batch_size + 1} batches")
+        logger.info(f"AI check completed for {ann_key}: {total_steps} steps sequentially")
 
     except Exception as e:
         logger.error(f"AI check failed for {ann_key}: {e}")
@@ -788,7 +898,7 @@ def load_oss_task_data(local_dir):
         action = ce.get('action', '')
         description = ve.get('description', ce.get('description', ''))
         code = build_pyautogui_code(action, ce, description)
-        has_coordinate = action in ('click', 'drag') and (x != 0 or y != 0)
+        has_coordinate = action in ('click', 'drag', 'scroll') and (x != 0 or y != 0)
 
         # Parse drag end coordinates
         drag_to = None
@@ -796,6 +906,29 @@ def load_oss_task_data(local_dir):
             match = re.search(r'Drag from \((\d+),\s*(\d+)\) to \((\d+),\s*(\d+)\)', description)
             if match:
                 drag_to = {'x': int(match.group(3)), 'y': int(match.group(4))}
+
+        # Parse scroll direction
+        scroll_info = None
+        if action == 'scroll':
+            s_down = re.search(r'⬇️×(\d+)', description)
+            s_up = re.search(r'⬆️×(\d+)', description)
+            s_left = re.search(r'⬅️×(\d+)', description)
+            s_right = re.search(r'➡️×(\d+)', description)
+            scroll_info = {'dx': 0, 'dy': 0}
+            if s_down: scroll_info['dy'] = int(s_down.group(1))
+            if s_up: scroll_info['dy'] = -int(s_up.group(1))
+            if s_right: scroll_info['dx'] = int(s_right.group(1))
+            if s_left: scroll_info['dx'] = -int(s_left.group(1))
+
+        # Detect click subtype
+        click_type = 'click'
+        if action == 'click':
+            if 'doubleClick' in code or 'double' in description.lower():
+                click_type = 'doubleClick'
+            elif 'rightClick' in code or 'right' in description.lower():
+                click_type = 'rightClick'
+            elif 'clicks=3' in code or 'triple' in description.lower():
+                click_type = 'tripleClick'
 
         steps.append({
             'index': i,
@@ -806,6 +939,8 @@ def load_oss_task_data(local_dir):
             'coordinate': {'x': x, 'y': y},
             'has_coordinate': has_coordinate,
             'drag_to': drag_to,
+            'scroll_info': scroll_info,
+            'click_type': click_type,
             'video_time': video_time
         })
 
@@ -4229,6 +4364,11 @@ OSS_REVIEW_TEMPLATE = '''
             color: #bbb; font-size: 0.78em; margin-bottom: 4px;
             padding-left: 8px; border-left: 2px solid #444;
         }
+        .ai-reasoning {
+            color: #90caf9; font-size: 0.78em; margin-bottom: 6px;
+            padding: 6px 8px; background: #0d1530; border-radius: 4px;
+            border-left: 2px solid #42a5f5; line-height: 1.5;
+        }
         .ai-issues {
             font-size: 0.75em; color: #ef9a9a; margin-bottom: 4px;
         }
@@ -4857,15 +4997,88 @@ OSS_REVIEW_TEMPLATE = '''
                     arrow.setAttribute('points', ex + ',' + ey + ' ' + ax1 + ',' + ay1 + ' ' + ax2 + ',' + ay2);
                     dragSvg.style.display = 'block';
                 }
-            } else {
+            } else if (step.action === 'scroll' && step.scroll_info) {
+                // Scroll arrow
+                const px = step.coordinate.x * scaleX;
+                const py = step.coordinate.y * scaleY;
+                const si = step.scroll_info;
+                const arrowLen = 40;
+                let endX = px, endY = py;
+                let label = 'Scroll';
+                if (si.dy > 0) { endY = py + arrowLen; label = 'Scroll Down x' + si.dy; }
+                else if (si.dy < 0) { endY = py - arrowLen; label = 'Scroll Up x' + Math.abs(si.dy); }
+                if (si.dx > 0) { endX = px + arrowLen; label = 'Scroll Right x' + si.dx; }
+                else if (si.dx < 0) { endX = px - arrowLen; label = 'Scroll Left x' + Math.abs(si.dx); }
+                // Draw SVG arrow for scroll
+                const scrollSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                scrollSvg.setAttribute('class', 'drag-line');
+                scrollSvg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;';
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('x1', px); line.setAttribute('y1', py);
+                line.setAttribute('x2', endX); line.setAttribute('y2', endY);
+                line.setAttribute('stroke', '#ff0040'); line.setAttribute('stroke-width', '2');
+                line.setAttribute('marker-end', 'url(#scrollArrowHead)');
+                // Arrowhead marker def
+                const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+                const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+                marker.setAttribute('id', 'scrollArrowHead'); marker.setAttribute('markerWidth', '10');
+                marker.setAttribute('markerHeight', '7'); marker.setAttribute('refX', '10');
+                marker.setAttribute('refY', '3.5'); marker.setAttribute('orient', 'auto');
+                const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                polygon.setAttribute('points', '0 0, 10 3.5, 0 7');
+                polygon.setAttribute('fill', '#ff0040');
+                marker.appendChild(polygon); defs.appendChild(marker); scrollSvg.appendChild(defs);
+                scrollSvg.appendChild(line);
+                // Label text
+                const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                text.setAttribute('x', px + 15); text.setAttribute('y', py - 8);
+                text.setAttribute('fill', '#ff0040'); text.setAttribute('font-size', '11');
+                text.setAttribute('font-weight', 'bold');
+                text.textContent = label;
+                scrollSvg.appendChild(text);
+                container.appendChild(scrollSvg);
+                // Also show position marker
                 const m = document.createElement('div');
                 m.className = 'coord-marker';
-                m.setAttribute('data-label', step.action + ' (' + step.coordinate.x + ',' + step.coordinate.y + ')');
-                m.style.left = (step.coordinate.x * scaleX) + 'px';
-                m.style.top = (step.coordinate.y * scaleY) + 'px';
-                m.style.display = 'block';
+                m.setAttribute('data-label', label + ' (' + step.coordinate.x + ',' + step.coordinate.y + ')');
+                m.style.left = px + 'px'; m.style.top = py + 'px'; m.style.display = 'block';
+                m.style.borderColor = '#ff9800'; // Orange for scroll
                 container.appendChild(m);
-                // Hide drag line for non-drag actions
+                const dragId = containerId.replace('stacked-img-', 'stacked-drag-');
+                const dragSvg = document.getElementById(dragId);
+                if (dragSvg) dragSvg.style.display = 'none';
+            } else {
+                // Click actions (single, double, right, triple)
+                const px = step.coordinate.x * scaleX;
+                const py = step.coordinate.y * scaleY;
+                const clickType = step.click_type || 'click';
+                const m = document.createElement('div');
+                m.className = 'coord-marker';
+                let label = step.action + ' (' + step.coordinate.x + ',' + step.coordinate.y + ')';
+                if (clickType === 'doubleClick') { label = 'dblclick (' + step.coordinate.x + ',' + step.coordinate.y + ')'; m.style.boxShadow = '0 0 8px rgba(255,0,64,0.5), 0 0 16px rgba(255,0,64,0.3)'; }
+                else if (clickType === 'rightClick') { label = 'rightclick (' + step.coordinate.x + ',' + step.coordinate.y + ')'; m.style.borderStyle = 'dashed'; }
+                else if (clickType === 'tripleClick') { label = 'triple (' + step.coordinate.x + ',' + step.coordinate.y + ')'; m.style.boxShadow = '0 0 8px rgba(255,0,64,0.5), 0 0 16px rgba(255,0,64,0.3), 0 0 24px rgba(255,0,64,0.2)'; }
+                m.setAttribute('data-label', label);
+                m.style.left = px + 'px'; m.style.top = py + 'px'; m.style.display = 'block';
+                container.appendChild(m);
+                // Add second ring for double/triple click
+                if (clickType === 'doubleClick' || clickType === 'tripleClick') {
+                    const m2 = document.createElement('div');
+                    m2.className = 'coord-marker';
+                    m2.style.left = px + 'px'; m2.style.top = py + 'px'; m2.style.display = 'block';
+                    m2.style.width = '40px'; m2.style.height = '40px'; m2.style.opacity = '0.5';
+                    m2.style.pointerEvents = 'none';
+                    container.appendChild(m2);
+                }
+                if (clickType === 'tripleClick') {
+                    const m3 = document.createElement('div');
+                    m3.className = 'coord-marker';
+                    m3.style.left = px + 'px'; m3.style.top = py + 'px'; m3.style.display = 'block';
+                    m3.style.width = '52px'; m3.style.height = '52px'; m3.style.opacity = '0.3';
+                    m3.style.pointerEvents = 'none';
+                    container.appendChild(m3);
+                }
+                // Hide drag line
                 const dragId = containerId.replace('stacked-img-', 'stacked-drag-');
                 const dragSvg = document.getElementById(dragId);
                 if (dragSvg) dragSvg.style.display = 'none';
@@ -5790,7 +6003,7 @@ OSS_REVIEW_TEMPLATE = '''
                 showAiProgress(true);
                 updateAiProgress(0, data.total || 0, null);
                 document.getElementById('aiProgressSubtitle').textContent =
-                    'Analyzing ' + (data.total || '?') + ' steps with Gemini (batch size ' + (data.batch_size || 5) + ')...';
+                    'Analyzing ' + (data.total || '?') + ' steps with Gemini (sequential, with annotated screenshots)...';
                 aiCheckPolling = setInterval(pollAiCheck, 1500);
             }).catch(err => {
                 btn.classList.remove('running');
@@ -5873,8 +6086,13 @@ OSS_REVIEW_TEMPLATE = '''
                 r.flags.forEach(function(f) { html += '<span class="ai-flag">' + f + '</span>'; });
             }
             html += '</div>';
+            // Correctness reason (short verdict)
             if (r.correctness_reason) {
-                html += '<div class="ai-reason">' + r.correctness_reason + '</div>';
+                html += '<div class="ai-reason"><b>Verdict:</b> ' + r.correctness_reason + '</div>';
+            }
+            // AI reasoning (detailed analysis)
+            if (r.reasoning) {
+                html += '<div class="ai-reasoning"><b>AI Analysis:</b> ' + r.reasoning + '</div>';
             }
             if (r.justification_issues && r.justification_issues.length > 0) {
                 html += '<div class="ai-issues">';
@@ -5882,9 +6100,10 @@ OSS_REVIEW_TEMPLATE = '''
                 html += '</div>';
             }
             if (r.rewritten_justification) {
-                html += '<div class="ai-rewrite"><label>AI Suggested Rewrite:</label>';
+                const isMissing = r.justification_quality === 'missing';
+                html += '<div class="ai-rewrite"><label>' + (isMissing ? 'AI Written Justification (original was empty):' : 'AI Suggested Rewrite:') + '</label>';
                 html += '<div class="ai-rewrite-text">' + r.rewritten_justification + '</div>';
-                html += '<button class="ai-apply-btn" onclick="applyAiRewrite(' + origIdx + ')">Apply This</button>';
+                html += '<button class="ai-apply-btn" onclick="applyAiRewrite(' + origIdx + ')">' + (isMissing ? 'Apply AI Justification' : 'Apply This') + '</button>';
                 html += '</div>';
             }
             html += '</div>';
@@ -6808,7 +7027,7 @@ def api_oss_ai_check():
     thread = threading.Thread(target=_run_ai_check_thread, args=(ann_key, oss_folder, folder_name), daemon=True)
     thread.start()
 
-    return jsonify({'status': 'started', 'total': total_steps, 'batch_size': AI_CHECK_BATCH_SIZE})
+    return jsonify({'status': 'started', 'total': total_steps})
 
 
 @app.route('/api/oss/ai_check_status')
