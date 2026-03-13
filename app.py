@@ -7680,7 +7680,7 @@ DIRECT_ACCESS_TEMPLATE = '''
 <body>
     <div class="access-card">
         <h1 style="color:#ff9800;">Annotator Entrance</h1>
-        <div class="subtitle">Enter your folder, case ID and username to view reviewer feedback and correct errors</div>
+        <div class="subtitle">Enter your folder, task ID and username to view reviewer feedback and correct errors</div>
 
         <div class="form-group">
             <label>OSS Folder</label>
@@ -7689,13 +7689,13 @@ DIRECT_ACCESS_TEMPLATE = '''
         </div>
 
         <div class="form-group">
-            <label>Case ID (Folder Name)</label>
-            <input type="text" id="caseId" placeholder="e.g. 20250101-120000_task1_user1_rec001" value="{{ case_id }}" />
-            <div class="hint">The full recording folder name on OSS</div>
+            <label>Task ID</label>
+            <input type="text" id="taskId" placeholder="e.g. Annotater07_vlc_scenario_fc4f43fb9122_22833104_000" value="{{ task_id }}" />
+            <div class="hint">The task ID shown in the review page (e.g. Annotater07_vlc_scenario_...)</div>
         </div>
 
         <div class="form-group">
-            <label>Username (for verification)</label>
+            <label>Username</label>
             <input type="text" id="username" placeholder="Your annotator username" value="{{ username }}" />
             <div class="hint">Must match the annotator who created this recording</div>
         </div>
@@ -7714,16 +7714,16 @@ DIRECT_ACCESS_TEMPLATE = '''
         // Auto-fill from URL params
         const params = new URLSearchParams(window.location.search);
         if (params.get('folder')) document.getElementById('ossFolder').value = params.get('folder');
-        if (params.get('case')) document.getElementById('caseId').value = params.get('case');
+        if (params.get('task')) document.getElementById('taskId').value = params.get('task');
         if (params.get('user')) document.getElementById('username').value = params.get('user');
 
         async function openCase() {
             const folder = document.getElementById('ossFolder').value.trim();
-            const caseId = document.getElementById('caseId').value.trim();
+            const taskId = document.getElementById('taskId').value.trim();
             const username = document.getElementById('username').value.trim();
             const errEl = document.getElementById('errorMsg');
 
-            if (!folder || !caseId || !username) {
+            if (!folder || !taskId || !username) {
                 errEl.textContent = 'All fields are required.';
                 errEl.style.display = 'block';
                 return;
@@ -7737,7 +7737,7 @@ DIRECT_ACCESS_TEMPLATE = '''
             try {
                 // Verify the case exists and username matches
                 const resp = await fetch('/api/oss/verify_access?folder=' + encodeURIComponent(folder) +
-                    '&case=' + encodeURIComponent(caseId) +
+                    '&task_id=' + encodeURIComponent(taskId) +
                     '&user=' + encodeURIComponent(username));
                 const data = await resp.json();
 
@@ -7757,8 +7757,9 @@ DIRECT_ACCESS_TEMPLATE = '''
                     return;
                 }
 
-                // Redirect to the annotator page in direct mode
-                window.location.href = '/annotator/' + encodeURIComponent(caseId) +
+                // Redirect to the annotator page using the resolved folder_name
+                const folderName = data.folder_name;
+                window.location.href = '/annotator/' + encodeURIComponent(folderName) +
                     '?folder=' + encodeURIComponent(folder) + '&direct=1';
             } catch (err) {
                 errEl.textContent = 'Connection error: ' + err.message;
@@ -7782,39 +7783,68 @@ DIRECT_ACCESS_TEMPLATE = '''
 def direct_access_page():
     """Landing page for direct case access by annotators."""
     default_folder = request.args.get('folder', '')
-    case_id = request.args.get('case', '')
+    task_id = request.args.get('task', '')
     username = request.args.get('user', '')
     return render_template_string(DIRECT_ACCESS_TEMPLATE,
                                   default_folder=default_folder,
-                                  case_id=case_id,
+                                  task_id=task_id,
                                   username=username)
 
 
 @app.route('/api/oss/verify_access')
 def api_oss_verify_access():
     """Verify that a user has access to a specific recording case.
+    Accepts task_id (the visible task identifier) and looks up the folder_name.
     Checks that the case exists and the username matches the annotator."""
     folder = request.args.get('folder', '')
-    case_id = request.args.get('case', '')
+    task_id = request.args.get('task_id', '')
     username = request.args.get('user', '')
 
-    if not folder or not case_id or not username:
-        return jsonify({'error': 'Missing required fields: folder, case, user'})
+    if not folder or not task_id or not username:
+        return jsonify({'error': 'Missing required fields: folder, task_id, user'})
 
     try:
         import oss_client
 
-        # Check if the recording exists
-        prefix = folder.rstrip('/') + '/' + case_id
-        metadata = oss_client.get_recording_metadata(prefix)
+        # Look up folder_name from task_id
+        # First: check cached dashboard data (fast)
+        matched_folder = None
+        cached = _dashboard_cache.get(folder)
+        if cached:
+            for ann_data in cached.get('annotators', {}).values():
+                for rec in ann_data.get('recordings', []):
+                    if rec.get('task_id', '') == task_id or rec.get('folder_name', '') == task_id:
+                        matched_folder = rec['folder_name']
+                        break
+                if matched_folder:
+                    break
 
-        if metadata is None:
-            # Try listing to verify the folder exists
+        # Fallback: search OSS recordings (slower, but works if cache is empty)
+        if not matched_folder:
             recordings = oss_client.list_recordings(folder)
-            if case_id not in recordings:
-                return jsonify({'error': 'Case not found: ' + case_id})
-            # No annotator_info.json — allow access by folder name match
-            parsed = oss_client.parse_folder_name_metadata(case_id)
+            for rec_name in recordings:
+                if rec_name == task_id:
+                    matched_folder = rec_name
+                    break
+                prefix = folder.rstrip('/') + '/' + rec_name
+                metadata = oss_client.get_recording_metadata(prefix)
+                if metadata and metadata.get('task_id', '') == task_id:
+                    matched_folder = rec_name
+                    break
+                if not metadata:
+                    parsed = oss_client.parse_folder_name_metadata(rec_name)
+                    if parsed.get('task_id', '') == task_id:
+                        matched_folder = rec_name
+                        break
+
+        if not matched_folder:
+            return jsonify({'error': 'Task ID not found: ' + task_id + '. Please check the task ID and folder name.'})
+
+        # Now verify username
+        prefix = folder.rstrip('/') + '/' + matched_folder
+        metadata = oss_client.get_recording_metadata(prefix)
+        if metadata is None:
+            parsed = oss_client.parse_folder_name_metadata(matched_folder)
             actual_username = parsed.get('username', 'Unknown')
         else:
             actual_username = metadata.get('username', 'Unknown')
@@ -7826,7 +7856,7 @@ def api_oss_verify_access():
                 'access_granted': False
             })
 
-        return jsonify({'access_granted': True, 'annotator': actual_username})
+        return jsonify({'access_granted': True, 'annotator': actual_username, 'folder_name': matched_folder})
 
     except Exception as e:
         return jsonify({'error': 'Failed to verify access: ' + str(e)})
