@@ -719,6 +719,7 @@ def _run_ai_check_thread(ann_key, oss_folder, folder_name):
         oss_annotations = load_oss_annotations()
         ann = oss_annotations.get(ann_key, {})
         justification_edits = ann.get('justification_edits', {})
+        code_edits = ann.get('code_edits', {})
         deleted_steps = set(ann.get('deleted_steps', []))
 
         steps = task_data.get('steps', [])
@@ -727,6 +728,8 @@ def _run_ai_check_thread(ann_key, oss_folder, folder_name):
             si = str(step['index'])
             if si in justification_edits:
                 step['justification'] = justification_edits[si]
+            if si in code_edits:
+                step['code'] = code_edits[si]
         steps = [s for s in steps if s['original_index'] not in deleted_steps]
 
         # Get query and instructions
@@ -3044,6 +3047,7 @@ DASHBOARD_TEMPLATE = '''
         <h1>OSS Recording Dashboard</h1>
         <div class="header-controls">
             <a href="/" class="nav-link">&#8592; Local Review</a>
+            <a href="/edit" class="nav-link" style="border-color:#ff9800;color:#ff9800;">Annotator Entrance</a>
             <input type="text" id="ossFolder" value="recordings_0303" placeholder="OSS upload folder..." />
             <button class="btn-load" id="loadBtn" onclick="loadDashboard()">Load</button>
             <label class="auto-poll-label">
@@ -3215,7 +3219,8 @@ DASHBOARD_TEMPLATE = '''
                     '</div>' +
                     '<div class="task-actions">' +
                     '<span class="review-badge ' + statusClass + '">' + statusLabel + '</span>' +
-                    '<a class="btn-view" href="/oss_review/' + encodeURIComponent(rec.folder_name) + '?folder=' + encodeURIComponent(folder) + '">View</a>' +
+                    '<a class="btn-view" href="/oss_review/' + encodeURIComponent(rec.folder_name) + '?folder=' + encodeURIComponent(folder) + '">Review</a>' +
+                    '<a class="btn-view" style="background:#ff9800;border-color:#ff9800;" href="/annotator/' + encodeURIComponent(rec.folder_name) + '?folder=' + encodeURIComponent(folder) + '" title="Copy this link for annotator">Annotator</a>' +
                     '</div></div>';
             });
 
@@ -3728,6 +3733,25 @@ OSS_REVIEW_TEMPLATE = '''
             color: #7ee787;
             margin-bottom: 6px;
         }
+        .code-editable {
+            position: relative;
+        }
+        .code-edit-input {
+            width: 100%;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            color: #7ee787;
+            font-family: 'Courier New', monospace;
+            font-size: 1em;
+            padding: 4px 6px;
+            box-sizing: border-box;
+        }
+        .code-edit-input:focus {
+            outline: none;
+            border-color: #58a6ff;
+            box-shadow: 0 0 0 2px rgba(88,166,255,0.3);
+        }
         .step-details .description { color: #ccc; line-height: 1.4; font-size: 0.9em; }
         .step-details .justification {
             color: #ffc107;
@@ -4212,6 +4236,97 @@ OSS_REVIEW_TEMPLATE = '''
         }
         .export-case-btn:hover { transform: translateY(-1px); box-shadow: 0 3px 10px rgba(76,175,80,0.3); }
 
+        /* Step error marks */
+        .btn-mark-error {
+            padding: 3px 10px;
+            border: 1px solid #f44336;
+            border-radius: 4px;
+            background: transparent;
+            color: #f44336;
+            cursor: pointer;
+            font-size: 0.75em;
+            font-weight: bold;
+            transition: all 0.2s;
+            margin-left: 8px;
+        }
+        .btn-mark-error:hover { background: #f44336; color: #fff; }
+        .btn-mark-error.marked {
+            background: #f44336;
+            color: #fff;
+        }
+        .btn-mark-error.marked:hover {
+            background: transparent;
+            color: #f44336;
+        }
+        .step-error-banner {
+            background: linear-gradient(135deg, #f4433620, #ff980020);
+            border: 1px solid #f44336;
+            border-radius: 6px;
+            padding: 8px 12px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .step-error-banner .error-icon {
+            color: #f44336;
+            font-size: 1.2em;
+            flex-shrink: 0;
+        }
+        .step-error-banner .error-text {
+            color: #ffab91;
+            font-size: 0.85em;
+        }
+        .step-error-note-input {
+            width: 100%;
+            background: #1a1a2e;
+            border: 1px solid #f4433660;
+            border-radius: 4px;
+            color: #ffab91;
+            font-size: 0.8em;
+            padding: 4px 8px;
+            margin-top: 4px;
+        }
+        .step-error-note-input:focus {
+            outline: none;
+            border-color: #f44336;
+        }
+        .review-progress-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 10px;
+            background: #16213e;
+            border-radius: 4px;
+            font-size: 0.8em;
+        }
+        .review-progress-bar .progress-text {
+            color: #888;
+            white-space: nowrap;
+        }
+        .review-progress-bar .progress-text b {
+            color: #f44336;
+        }
+        .review-progress-bar .progress-track {
+            flex: 1;
+            height: 4px;
+            background: #333;
+            border-radius: 2px;
+            min-width: 60px;
+        }
+        .review-progress-bar .progress-fill {
+            height: 100%;
+            background: #4caf50;
+            border-radius: 2px;
+            transition: width 0.3s;
+        }
+        .stacked-step-card.has-error {
+            border-left: 3px solid #f44336 !important;
+        }
+        .step-item.has-error {
+            border-left: 3px solid #f44336;
+        }
+
         /* AI Check */
         .btn-ai-check {
             padding: 5px 14px;
@@ -4396,6 +4511,7 @@ OSS_REVIEW_TEMPLATE = '''
         .grid-card.ai-redundant { border-color: #ff9800; }
         .grid-card.ai-suspicious { border-color: #ffc107; }
         .grid-card.ai-correct { border-color: #333; }
+        .grid-card.has-error { border-color: #f44336; box-shadow: 0 0 8px rgba(244,67,54,0.3); }
 
         /* Reset button */
         .btn-reset {
@@ -4425,6 +4541,10 @@ OSS_REVIEW_TEMPLATE = '''
         <div class="mode-toggle">
             <button id="modeReview" class="active" onclick="setMode('review')">Review</button>
             <button id="modeAnnotation" onclick="setMode('annotation')">Annotate</button>
+        </div>
+        <div id="reviewProgressContainer" class="review-progress-bar" style="display:none;">
+            <span class="progress-text" id="reviewProgressText">Errors: <b>0</b> / Reviewed: 0</span>
+            <div class="progress-track"><div class="progress-fill" id="reviewProgressFill" style="width:0%"></div></div>
         </div>
         <div id="aiCheckContainer" style="display:flex;align-items:center;gap:6px;">
             <button class="btn-ai-check" id="aiCheckBtn" onclick="startAiCheck()">AI Check</button>
@@ -4543,12 +4663,15 @@ OSS_REVIEW_TEMPLATE = '''
         let folderName = '{{ folder_name }}';
         const ossFolder = new URLSearchParams(window.location.search).get('folder') || 'recordings_0303';
         const directMode = new URLSearchParams(window.location.search).get('direct') === '1';
+        const pageMode = '{{ page_mode | default("reviewer") }}';  // 'reviewer' or 'annotator'
+        const isAnnotatorMode = pageMode === 'annotator';
         let taskData = null;
         let currentStep = 0;
         let reviewStatus = 'unreviewed';
         let currentMode = 'review';
         let annotation = {};
         let coordAdjustments = {};
+        let stepErrors = {};  // {origIdx: {note: '...'}} - reviewer-marked errors
         let finetuneActive = false;
         let allRecordings = [];
         let filteredRecordings = [];
@@ -4565,6 +4688,19 @@ OSS_REVIEW_TEMPLATE = '''
             if (recSidebar) recSidebar.style.display = 'none';
             const aiContainer = document.getElementById('aiCheckContainer');
             if (aiContainer) aiContainer.style.display = 'none';
+        }
+
+        // Annotator mode: hide AI check, mode toggle, reset button; change header
+        if (isAnnotatorMode) {
+            document.getElementById('aiCheckContainer').style.display = 'none';
+            document.querySelector('.mode-toggle').style.display = 'none';
+            document.querySelector('.btn-reset').style.display = 'none';
+            document.querySelector('.header h1').textContent = 'Annotator Review';
+            document.querySelector('.header h1').style.color = '#ff9800';
+            // Hide review decision panel for annotator
+            document.querySelector('.panel-review').style.display = 'none';
+            // Change back link for annotator
+            document.getElementById('backLink').textContent = 'Back';
         }
 
         // ========== Recording sidebar ==========
@@ -4686,15 +4822,17 @@ OSS_REVIEW_TEMPLATE = '''
             if (newFolderName === folderName) return;
             folderName = newFolderName;
             // Update URL without reload
-            const url = '/oss_review/' + encodeURIComponent(folderName) + '?folder=' + encodeURIComponent(ossFolder);
+            const baseRoute = isAnnotatorMode ? '/annotator/' : '/oss_review/';
+            const url = baseRoute + encodeURIComponent(folderName) + '?folder=' + encodeURIComponent(ossFolder);
             history.pushState(null, '', url);
-            document.title = 'OSS Review - ' + folderName;
+            document.title = (isAnnotatorMode ? 'Annotator Review - ' : 'OSS Review - ') + folderName;
             // Reset and reload
             taskData = null;
             currentStep = 0;
             finetuneActive = false;
             annotation = {};
             coordAdjustments = {};
+            stepErrors = {};
             // Reset AI check state
             if (aiCheckPolling) { clearInterval(aiCheckPolling); aiCheckPolling = null; }
             aiCheckResults = null;
@@ -4736,6 +4874,7 @@ OSS_REVIEW_TEMPLATE = '''
 
                 annotation = taskData.annotation || {};
                 coordAdjustments = taskData.coord_adjustments || {};
+                stepErrors = taskData.step_errors || {};
                 // Load AI check results if available
                 if (annotation.ai_check_results && annotation.ai_check_results.status === 'completed') {
                     aiCheckResults = annotation.ai_check_results;
@@ -4762,6 +4901,11 @@ OSS_REVIEW_TEMPLATE = '''
                     '<textarea class="query-edit-input" id="query-edit" onchange="saveQuery(this.value)" placeholder="Enter query...">' +
                     (info.query || '') + '</textarea></div>';
                 infoHtml += '<div class="info-item"><button class="export-case-btn" onclick="exportCase()">Export Case</button></div>';
+                // Show error count for annotator
+                const errorCount = Object.keys(stepErrors).length;
+                if (isAnnotatorMode && errorCount > 0) {
+                    infoHtml += '<div class="info-item" style="color:#f44336;font-weight:bold;">&#9888; ' + errorCount + ' step(s) marked as errors by reviewer</div>';
+                }
                 document.getElementById('annotatorInfo').innerHTML = infoHtml || '<div class="info-item"><span>No annotator info</span></div>';
 
                 // Human-provided data section
@@ -4783,6 +4927,7 @@ OSS_REVIEW_TEMPLATE = '''
 
                 reviewStatus = taskData.review_status || 'unreviewed';
                 updateReviewUI();
+                updateReviewProgress();
 
                 renderStepSidebar();
                 renderStep(0);
@@ -4804,14 +4949,23 @@ OSS_REVIEW_TEMPLATE = '''
             steps.forEach((step, i) => {
                 const origIdx = step.original_index != null ? step.original_index : i;
                 const aiR = getAiStepResult(origIdx);
+                const hasError = !!stepErrors[String(origIdx)];
                 let aiDot = '';
                 if (aiR) {
                     const dotColor = {correct:'#4caf50', wrong:'#f44336', redundant:'#ff9800', suspicious:'#ffc107'}[aiR.correctness] || '#888';
-                    aiDot = '<span style="width:6px;height:6px;border-radius:50%;background:' + dotColor + ';display:inline-block;margin-left:4px;flex-shrink:0;"></span>';
+                    const justDotColor = {good:'#4caf50', acceptable:'#8bc34a', poor:'#f44336', missing:'#ff9800'}[aiR.justification_quality] || '#888';
+                    aiDot = '<span style="width:6px;height:6px;border-radius:50%;background:' + dotColor + ';display:inline-block;margin-left:4px;flex-shrink:0;" title="AI: ' + (aiR.correctness || 'unknown') + '"></span>';
+                    aiDot += '<span style="width:6px;height:6px;border-radius:50%;background:' + justDotColor + ';display:inline-block;margin-left:2px;flex-shrink:0;" title="Justification: ' + (aiR.justification_quality || 'unknown') + '"></span>';
                 }
-                html += '<div class="step-item' + (i === 0 ? ' active' : '') + '" onclick="selectStep(' + i + ')" id="step-' + i + '" style="display:flex;align-items:center;">' +
+                // Error mark indicator
+                let errorDot = '';
+                if (hasError) {
+                    errorDot = '<span style="width:8px;height:8px;border-radius:50%;background:#f44336;display:inline-block;margin-left:3px;flex-shrink:0;box-shadow:0 0 4px #f44336;" title="Reviewer marked error"></span>';
+                }
+                html += '<div class="step-item' + (i === 0 ? ' active' : '') + (hasError ? ' has-error' : '') + '" onclick="selectStep(' + i + ')" id="step-' + i + '" style="display:flex;align-items:center;">' +
                     '<span class="step-num">' + i + '</span> ' +
                     '<span class="step-action" style="flex:1;">' + (step.action || '') + '</span>' +
+                    errorDot +
                     aiDot +
                     '</div>';
             });
@@ -4867,14 +5021,31 @@ OSS_REVIEW_TEMPLATE = '''
                 const origCoord = isAdjusted ? (adj.original || step.coordinate) : step.coordinate;
                 const imgUrl = '/oss_frame/' + encodeURIComponent(folderName) + '/' + step.video_time + '?folder=' + encodeURIComponent(ossFolder);
 
-                html += '<div class="stacked-step-card" id="stacked-step-' + idx + '" onclick="onStackedStepClick(' + idx + ')">';
+                const hasStepError = !!stepErrors[String(origIdx)];
+                html += '<div class="stacked-step-card' + (hasStepError ? ' has-error' : '') + '" id="stacked-step-' + idx + '" onclick="onStackedStepClick(' + idx + ')">';
 
                 // Header
                 html += '<div class="stacked-step-header"><h4>Step ' + idx + ': ' + (step.action || '');
                 if (isAdjusted) html += ' <span class="adjusted-badge">Adjusted</span>';
                 html += '</h4>';
+                // Mark Error button (reviewer only) or Delete button
+                if (!isAnnotatorMode) {
+                    html += '<button class="btn-mark-error' + (hasStepError ? ' marked' : '') + '" onclick="event.stopPropagation();toggleStepError(' + idx + ')">' + (hasStepError ? 'Unmark Error' : 'Mark Error') + '</button>';
+                }
                 html += '<button class="delete-step-btn" onclick="event.stopPropagation();confirmDeleteStep(' + idx + ')" title="Delete this step">Delete</button>';
                 html += '</div>';
+
+                // Error banner (shown for both reviewer and annotator)
+                if (hasStepError) {
+                    const errNote = (stepErrors[String(origIdx)] && stepErrors[String(origIdx)].note) || '';
+                    html += '<div class="step-error-banner"><span class="error-icon">&#9888;</span><div>';
+                    html += '<span class="error-text">Marked as error by reviewer</span>';
+                    if (errNote) html += '<div style="color:#ffab91;font-size:0.8em;margin-top:2px;">' + errNote + '</div>';
+                    if (!isAnnotatorMode) {
+                        html += '<input class="step-error-note-input" placeholder="Note for annotator..." value="' + errNote.replace(/"/g, '&quot;') + '" onclick="event.stopPropagation()" onchange="saveStepErrorNote(' + idx + ', this.value)" />';
+                    }
+                    html += '</div></div>';
+                }
 
                 // Resolution info
                 html += '<div class="image-info" id="stacked-info-' + idx + '" style="margin-bottom:4px;"><div class="resolution-info">Res: <b>' + videoWidth + ' x ' + videoHeight + '</b></div></div>';
@@ -4885,8 +5056,12 @@ OSS_REVIEW_TEMPLATE = '''
                 html += '<svg class="drag-line" id="stacked-drag-' + idx + '" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;"><line id="stacked-dragline-' + idx + '" /><polygon id="stacked-dragarrow-' + idx + '" /></svg>';
                 html += '</div>';
 
-                // Code
-                html += '<div class="code">' + (step.code || '') + '</div>';
+                // Code - editable for type/press operations
+                if (step.action === 'type' || step.action === 'press') {
+                    html += '<div class="code code-editable"><input type="text" class="code-edit-input" value="' + (step.code || '').replace(/"/g, '&quot;') + '" onchange="saveCode(' + idx + ', this.value)" title="Edit code" /></div>';
+                } else {
+                    html += '<div class="code">' + (step.code || '') + '</div>';
+                }
 
                 // Coordinate with fine-tune
                 if (step.has_coordinate) {
@@ -5255,6 +5430,8 @@ OSS_REVIEW_TEMPLATE = '''
                 const aiR = getAiStepResult(origIdx);
                 let aiCardClass = '';
                 if (aiR) aiCardClass = ' ai-' + (aiR.correctness || 'unknown');
+                const hasGridError = !!stepErrors[String(origIdx)];
+                if (hasGridError) aiCardClass += ' has-error';
 
                 html += '<div class="grid-card' + aiCardClass + '" data-step="' + globalIdx + '" onclick="openDetail(' + globalIdx + ')">';
                 html += '<div class="grid-card-img" id="grid-img-' + globalIdx + '">';
@@ -5266,6 +5443,7 @@ OSS_REVIEW_TEMPLATE = '''
                 if (step.code) html += '<div class="grid-card-code">' + step.code + '</div>';
                 if (step.justification) html += '<div class="grid-card-justification">' + step.justification + '</div>';
                 let badges = '';
+                if (hasGridError) badges += '<span class="badge" style="background:#f44336;color:#fff;">ERROR</span>';
                 if (isAdjusted) badges += '<span class="badge badge-adjusted">Adjusted</span>';
                 if (aiR) {
                     const ccls = {correct:'ai-correct', wrong:'ai-wrong', redundant:'ai-redundant', suspicious:'ai-suspicious'}[aiR.correctness] || 'ai-unknown';
@@ -5386,12 +5564,32 @@ OSS_REVIEW_TEMPLATE = '''
             html += '<svg class="drag-line" id="detailDragSvg" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;"><line id="detailDragLine" /><polygon id="detailDragArrow" /></svg>';
             html += '</div>';
 
+            // Error banner in detail
+            const hasDetailError = !!stepErrors[String(origIdx)];
+            if (hasDetailError) {
+                const errNote = (stepErrors[String(origIdx)] && stepErrors[String(origIdx)].note) || '';
+                html += '<div class="step-error-banner"><span class="error-icon">&#9888;</span><div>';
+                html += '<span class="error-text">Marked as error by reviewer</span>';
+                if (errNote) html += '<div style="color:#ffab91;font-size:0.8em;margin-top:2px;">' + errNote + '</div>';
+                if (!isAnnotatorMode) {
+                    html += '<input class="step-error-note-input" placeholder="Note for annotator..." value="' + errNote.replace(/"/g, '&quot;') + '" onchange="saveStepErrorNote(' + idx + ', this.value)" />';
+                }
+                html += '</div></div>';
+            }
+
             html += '<div class="step-details" style="margin-bottom:10px;">';
             html += '<h4>Step ' + idx + ': ' + (step.action || '');
             if (isAdjusted) html += ' <span class="adjusted-badge">Adjusted</span>';
+            if (!isAnnotatorMode) {
+                html += ' <button class="btn-mark-error' + (hasDetailError ? ' marked' : '') + '" onclick="toggleStepError(' + idx + ');renderDetailOverlay(' + idx + ')">' + (hasDetailError ? 'Unmark Error' : 'Mark Error') + '</button>';
+            }
             html += ' <button class="delete-step-btn" onclick="confirmDeleteStep(' + idx + ')" title="Delete this step">Delete Step</button>';
             html += '</h4>';
-            html += '<div class="code">' + (step.code || '') + '</div>';
+            if (step.action === 'type' || step.action === 'press') {
+                html += '<div class="code code-editable"><input type="text" class="code-edit-input" value="' + (step.code || '').replace(/"/g, '&quot;') + '" onchange="saveCode(' + idx + ', this.value)" title="Edit code" /></div>';
+            } else {
+                html += '<div class="code">' + (step.code || '') + '</div>';
+            }
             if (step.has_coordinate) {
                 html += '<div style="margin-bottom:6px;font-size:0.85em;">';
                 if (isAdjusted) {
@@ -5700,6 +5898,115 @@ OSS_REVIEW_TEMPLATE = '''
             } catch (err) { console.error('Save failed:', err); }
         }
 
+        // ========== Step Error Marking (Reviewer) ==========
+
+        async function toggleStepError(stepIdx) {
+            const step = taskData && taskData.steps[stepIdx];
+            if (!step) return;
+            const origIdx = step.original_index != null ? step.original_index : stepIdx;
+            const si = String(origIdx);
+            const isCurrentlyError = !!stepErrors[si];
+
+            if (isCurrentlyError) {
+                delete stepErrors[si];
+            } else {
+                stepErrors[si] = {note: ''};
+            }
+
+            try {
+                await fetch('/api/oss/mark_step_error', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        folder_name: folderName, oss_folder: ossFolder,
+                        step_index: origIdx, is_error: !isCurrentlyError
+                    })
+                });
+            } catch (err) { console.error('Mark error failed:', err); }
+
+            // Update UI in-place
+            updateStepErrorUI(stepIdx);
+            renderStepSidebar();
+            updateReviewProgress();
+        }
+
+        async function saveStepErrorNote(stepIdx, note) {
+            const step = taskData && taskData.steps[stepIdx];
+            if (!step) return;
+            const origIdx = step.original_index != null ? step.original_index : stepIdx;
+            const si = String(origIdx);
+            if (!stepErrors[si]) return;
+            stepErrors[si].note = note;
+
+            try {
+                await fetch('/api/oss/mark_step_error', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        folder_name: folderName, oss_folder: ossFolder,
+                        step_index: origIdx, is_error: true, note: note
+                    })
+                });
+            } catch (err) { console.error('Save error note failed:', err); }
+        }
+
+        function updateStepErrorUI(stepIdx) {
+            const step = taskData && taskData.steps[stepIdx];
+            if (!step) return;
+            const origIdx = step.original_index != null ? step.original_index : stepIdx;
+            const si = String(origIdx);
+            const isError = !!stepErrors[si];
+
+            // Update stacked card
+            const card = document.getElementById('stacked-step-' + stepIdx);
+            if (card) {
+                card.classList.toggle('has-error', isError);
+                // Update button
+                const btn = card.querySelector('.btn-mark-error');
+                if (btn) {
+                    btn.classList.toggle('marked', isError);
+                    btn.textContent = isError ? 'Unmark Error' : 'Mark Error';
+                }
+                // Update/remove error banner
+                let banner = card.querySelector('.step-error-banner');
+                if (isError && !banner) {
+                    // Insert banner after header
+                    const header = card.querySelector('.stacked-step-header');
+                    if (header) {
+                        banner = document.createElement('div');
+                        banner.className = 'step-error-banner';
+                        banner.innerHTML = '<span class="error-icon">&#9888;</span><div><span class="error-text">Marked as error by reviewer</span>' +
+                            (isAnnotatorMode ? '' : '<input class="step-error-note-input" placeholder="Note for annotator..." value="' + ((stepErrors[si] && stepErrors[si].note) || '').replace(/"/g, '&quot;') + '" onchange="saveStepErrorNote(' + stepIdx + ', this.value)" />') +
+                            '</div>';
+                        header.after(banner);
+                    }
+                } else if (!isError && banner) {
+                    banner.remove();
+                } else if (isError && banner && !isAnnotatorMode) {
+                    const noteInput = banner.querySelector('.step-error-note-input');
+                    if (noteInput) noteInput.value = (stepErrors[si] && stepErrors[si].note) || '';
+                }
+            }
+        }
+
+        function updateReviewProgress() {
+            const steps = taskData ? taskData.steps || [] : [];
+            const totalSteps = steps.length;
+            const errorCount = Object.keys(stepErrors).length;
+            // Count "reviewed" as steps that have been explicitly checked (either marked error or have AI result)
+            // For the reviewer progress, we track how many steps they have reviewed by looking at steps with any AI result or error mark
+            const reviewedCount = steps.filter((s, i) => {
+                const origIdx = s.original_index != null ? s.original_index : i;
+                return !!stepErrors[String(origIdx)] || !!getAiStepResult(origIdx);
+            }).length;
+
+            const pct = totalSteps > 0 ? Math.round((reviewedCount / totalSteps) * 100) : 0;
+            document.getElementById('reviewProgressText').innerHTML =
+                'Errors: <b style="color:#f44336">' + errorCount + '</b> | Reviewed: ' + reviewedCount + '/' + totalSteps;
+            document.getElementById('reviewProgressFill').style.width = pct + '%';
+            document.getElementById('reviewProgressContainer').style.display = 'flex';
+        }
+
         function updateRecSidebarStatus() {
             // Update the recording sidebar to reflect new status
             const rec = allRecordings.find(r => r.folder_name === folderName);
@@ -5727,6 +6034,24 @@ OSS_REVIEW_TEMPLATE = '''
                         })
                     });
                 } catch (err) { console.error('Save justification failed:', err); }
+            }
+        }
+
+        async function saveCode(stepIdx, value) {
+            const step = taskData && taskData.steps[stepIdx];
+            if (step) {
+                step.code = value;
+                const origIdx = step.original_index != null ? step.original_index : stepIdx;
+                try {
+                    await fetch('/api/oss/update_code', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            folder_name: folderName, oss_folder: ossFolder,
+                            step_index: origIdx, code: value
+                        })
+                    });
+                } catch (err) { console.error('Save code failed:', err); }
             }
         }
 
@@ -5810,9 +6135,31 @@ OSS_REVIEW_TEMPLATE = '''
 
         // ========== Export ==========
 
-        function exportCase() {
-            const url = '/api/oss/export_case/' + encodeURIComponent(folderName) + '?folder=' + encodeURIComponent(ossFolder);
-            window.location.href = url;
+        async function exportCase() {
+            const btn = document.querySelector('.export-case-btn');
+            if (btn) { btn.textContent = 'Exporting...'; btn.disabled = true; }
+            try {
+                const url = '/api/oss/export_case/' + encodeURIComponent(folderName) + '?folder=' + encodeURIComponent(ossFolder);
+                const resp = await fetch(url);
+                if (!resp.ok) {
+                    const errData = await resp.json().catch(() => ({}));
+                    alert('Export failed: ' + (errData.error || resp.statusText));
+                    return;
+                }
+                const blob = await resp.blob();
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = folderName + '.zip';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(a.href);
+                alert('Export downloaded successfully!');
+            } catch (err) {
+                alert('Export failed: ' + err.message);
+            } finally {
+                if (btn) { btn.textContent = 'Export'; btn.disabled = false; }
+            }
         }
 
         // ========== Reset to Original ==========
@@ -6067,6 +6414,7 @@ OSS_REVIEW_TEMPLATE = '''
             document.getElementById('aiCheckStatus').textContent = issues > 0 ? issues + ' issues found' : 'All OK';
             document.getElementById('aiCheckStatus').style.color = issues > 0 ? '#ff9800' : '#4caf50';
             refreshAiDisplay();
+            updateReviewProgress();
         }
 
         function refreshAiDisplay() {
@@ -6132,10 +6480,33 @@ OSS_REVIEW_TEMPLATE = '''
             if (stepIdx < 0) return;
             steps[stepIdx].justification = r.rewritten_justification;
             saveJustification(stepIdx, r.rewritten_justification);
-            // Re-render
-            if (viewMode === 'single') renderStep(currentStep);
-            if (document.getElementById('detailOverlay').classList.contains('show')) {
-                renderDetailOverlay(detailStepIdx);
+
+            // Update in-place: find the stacked step card's justification textarea
+            const card = document.getElementById('stacked-step-' + stepIdx);
+            if (card) {
+                const textarea = card.querySelector('.justification-input');
+                if (textarea) textarea.value = r.rewritten_justification;
+                // Replace the apply button with "Adopted" badge
+                const applyBtn = card.querySelector('.ai-apply-btn');
+                if (applyBtn) {
+                    applyBtn.textContent = 'Adopted';
+                    applyBtn.disabled = true;
+                    applyBtn.style.background = '#4caf50';
+                    applyBtn.style.cursor = 'default';
+                }
+            }
+
+            // Also update detail overlay if open
+            if (document.getElementById('detailOverlay').classList.contains('show') && detailStepIdx === stepIdx) {
+                const detailTextarea = document.querySelector('#detailOverlayBody .justification-input');
+                if (detailTextarea) detailTextarea.value = r.rewritten_justification;
+                const detailBtn = document.querySelector('#detailOverlayBody .ai-apply-btn');
+                if (detailBtn) {
+                    detailBtn.textContent = 'Adopted';
+                    detailBtn.disabled = true;
+                    detailBtn.style.background = '#4caf50';
+                    detailBtn.style.cursor = 'default';
+                }
             }
         }
 
@@ -6391,14 +6762,17 @@ def api_oss_task(folder_name):
         ann = oss_annotations.get(review_key, {})
         data['annotation'] = ann
 
-        # === Apply overlay: justification edits ===
+        # === Apply overlay: justification edits + code edits ===
         # Each step keeps its original_index so overlays reference the correct step
         justification_edits = ann.get('justification_edits', {})
+        code_edits = ann.get('code_edits', {})
         for step in data.get('steps', []):
             step['original_index'] = step['index']  # preserve original index
             si = str(step['index'])
             if si in justification_edits:
                 step['justification'] = justification_edits[si]
+            if si in code_edits:
+                step['code'] = code_edits[si]
 
         # === Apply overlay: query edit ===
         if 'query' in ann and ann['query']:
@@ -6439,6 +6813,9 @@ def api_oss_task(folder_name):
                 step['index'] = i
 
         data['deleted_step_count'] = len(deleted_steps)
+
+        # === Include step errors (reviewer marks) ===
+        data['step_errors'] = ann.get('step_errors', {})
 
         return jsonify(data)
 
@@ -6628,6 +7005,29 @@ def api_oss_update_justification():
     return jsonify({'success': True})
 
 
+@app.route('/api/oss/update_code', methods=['POST'])
+def api_oss_update_code():
+    """Save edited code for a step of an OSS recording.
+    Stores in overlay only - never modifies cached OSS files."""
+    data = request.json
+    folder_name = data.get('folder_name', '')
+    oss_folder = data.get('oss_folder', 'recordings_0303')
+    step_index = data.get('step_index')
+    code = data.get('code', '')
+
+    ann_key = f"{oss_folder}/{folder_name}"
+    oss_annotations = load_oss_annotations()
+    existing = oss_annotations.get(ann_key, {})
+    edits = existing.get('code_edits', {})
+    edits[str(step_index)] = code
+    existing['code_edits'] = edits
+    oss_annotations[ann_key] = existing
+    save_oss_annotations(oss_annotations)
+
+    _sync_overlay_to_oss(oss_folder, folder_name)
+    return jsonify({'success': True})
+
+
 @app.route('/api/oss/update_query', methods=['POST'])
 def api_oss_update_query():
     """Save edited query for an OSS recording.
@@ -6672,6 +7072,33 @@ def api_oss_delete_step():
 
     _sync_overlay_to_oss(oss_folder, folder_name)
     return jsonify({'success': True})
+
+
+@app.route('/api/oss/mark_step_error', methods=['POST'])
+def api_oss_mark_step_error():
+    """Toggle a step error mark for reviewer feedback to annotator."""
+    data = request.json
+    folder_name = data.get('folder_name', '')
+    oss_folder = data.get('oss_folder', 'recordings_0303')
+    step_index = data.get('step_index')
+    is_error = data.get('is_error', True)
+    note = data.get('note', '')
+
+    ann_key = f"{oss_folder}/{folder_name}"
+    oss_annotations = load_oss_annotations()
+    existing = oss_annotations.get(ann_key, {})
+    step_errors = existing.get('step_errors', {})
+    si = str(step_index)
+    if is_error:
+        step_errors[si] = {'note': note, 'marked_at': datetime.now().isoformat()}
+    else:
+        step_errors.pop(si, None)
+    existing['step_errors'] = step_errors
+    oss_annotations[ann_key] = existing
+    save_oss_annotations(oss_annotations)
+
+    _sync_overlay_to_oss(oss_folder, folder_name)
+    return jsonify({'success': True, 'error_count': len(step_errors)})
 
 
 @app.route('/api/oss/reset_case', methods=['POST'])
@@ -6725,124 +7152,147 @@ def api_oss_reset_case():
 @app.route('/api/oss/export_case/<path:folder_name>')
 def api_oss_export_case(folder_name):
     """Export a single graded case as a downloadable zip with JSONL and images."""
-    import cv2
+    try:
+        import cv2
 
-    oss_folder = request.args.get('folder', 'recordings_0303')
-    ann_key = f"{oss_folder}/{folder_name}"
+        oss_folder = request.args.get('folder', 'recordings_0303')
+        ann_key = f"{oss_folder}/{folder_name}"
 
-    local_dir = OSS_CACHE_DIR / folder_name
-    if not local_dir.exists():
-        return jsonify({'error': 'Recording not cached locally'}), 404
+        local_dir = OSS_CACHE_DIR / folder_name
+        if not local_dir.exists():
+            return jsonify({'error': 'Recording not cached locally'}), 404
 
-    # Load data
-    task_data = load_oss_task_data(local_dir)
-    if not task_data:
-        return jsonify({'error': 'Could not load recording data'}), 404
+        # Load data
+        task_data = load_oss_task_data(local_dir)
+        if not task_data:
+            return jsonify({'error': 'Could not load recording data'}), 404
 
-    oss_annotations = load_oss_annotations()
-    ann = oss_annotations.get(ann_key, {})
-    coord_adjustments = load_oss_coord_adjustments()
+        oss_annotations = load_oss_annotations()
+        ann = oss_annotations.get(ann_key, {})
+        coord_adjustments = load_oss_coord_adjustments()
 
-    # Apply overlay: coord adjustments, justification edits, deleted steps
-    steps = task_data.get('steps', [])
-    justification_edits = ann.get('justification_edits', {})
-    deleted_steps = set(ann.get('deleted_steps', []))
-    for step in steps:
-        si = str(step['index'])
-        adj_key_s = f"{ann_key}_{step['index']}"
-        if adj_key_s in coord_adjustments:
-            adj = coord_adjustments[adj_key_s]
-            step['coordinate'] = {'x': adj['x'], 'y': adj['y']}
-        if si in justification_edits:
-            step['justification'] = justification_edits[si]
-
-    # Filter out deleted steps
-    if deleted_steps:
-        steps = [s for s in steps if s['index'] not in deleted_steps]
-
-    # Find video
-    video_file = None
-    for f in local_dir.glob('*.mp4'):
-        if 'video_clips' not in str(f):
-            video_file = f
-            break
-
-    # Build zip in memory
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-        # Build export JSONL
-        export_lines = []
-        traj = []
+        # Apply overlay: coord adjustments, justification edits, code edits, deleted steps
+        steps = task_data.get('steps', [])
+        justification_edits = ann.get('justification_edits', {})
+        code_edits = ann.get('code_edits', {})
+        deleted_steps = set(ann.get('deleted_steps', []))
         for step in steps:
-            code = step.get('code', '')
-            # Re-generate code with adjusted coordinates
-            coord = step.get('coordinate', {})
-            x, y = coord.get('x', 0), coord.get('y', 0)
-            action = step.get('action', '')
+            si = str(step['index'])
+            adj_key_s = f"{ann_key}_{step['index']}"
+            if adj_key_s in coord_adjustments:
+                adj = coord_adjustments[adj_key_s]
+                step['coordinate'] = {'x': adj['x'], 'y': adj['y']}
+                # Regenerate code with adjusted coordinates
+                x, y = adj['x'], adj['y']
+                code = step.get('code', '')
+                if 'doubleClick' in code:
+                    step['code'] = f"pyautogui.doubleClick({x}, {y})"
+                elif 'rightClick' in code:
+                    step['code'] = f"pyautogui.rightClick({x}, {y})"
+                elif 'clicks=3' in code:
+                    step['code'] = f"pyautogui.click({x}, {y}, clicks=3)"
+                elif 'click' in code.lower() and 'pyautogui.click' in code:
+                    step['code'] = f"pyautogui.click({x}, {y})"
+                elif 'moveTo' in code and 'dragTo' in code:
+                    match = re.search(r'dragTo\((\d+),\s*(\d+)\)', code)
+                    if match:
+                        step['code'] = f"pyautogui.moveTo({x}, {y}); pyautogui.dragTo({match.group(1)}, {match.group(2)})"
+            if si in justification_edits:
+                step['justification'] = justification_edits[si]
+            # Code edits override everything (including coord-regenerated code)
+            if si in code_edits:
+                step['code'] = code_edits[si]
 
-            traj.append({
-                'index': step['index'],
-                'action_type': action,
-                'code': code,
-                'screenshot': f"step_{step['index']}.png",
-                'coordinate': coord,
-                'justification': step.get('justification', ''),
-                'description': step.get('description', ''),
-            })
-            export_lines.append(json.dumps({
-                'action': action,
-                'coordinate': coord,
-                'justification': step.get('justification', ''),
-                'description': step.get('description', ''),
-                'code': code,
-            }, ensure_ascii=False))
+        # Filter out deleted steps
+        if deleted_steps:
+            steps = [s for s in steps if s['index'] not in deleted_steps]
 
-        # Write jsonl
-        zf.writestr(f"{folder_name}/events.jsonl", '\n'.join(export_lines) + '\n')
+        # Find video
+        video_file = None
+        for f in local_dir.glob('*.mp4'):
+            if 'video_clips' not in str(f):
+                video_file = f
+                break
 
-        # Write export JSON
-        info = task_data.get('annotator_info', {})
-        query = ann.get('query', info.get('query', ''))
-        export_json = {
-            'folder_name': folder_name,
-            'query': query,
-            'instruction': query,
-            'annotator': info.get('username', ''),
-            'task_id': info.get('task_id', ''),
-            'mark': ann.get('mark'),
-            'scores': ann.get('scores', {}),
-            'pass_reason': ann.get('pass_reason', ''),
-            'step_by_step_instructions': ann.get('step_by_step_instructions', ''),
-            'knowledge_points': {
-                'osworld_overlap': ann.get('osworld_overlap', []),
-                'custom_nodes': ann.get('custom_nodes', []),
-            },
-            'related_apps': ann.get('related_apps', []),
-            'traj': traj,
-        }
-        zf.writestr(f"{folder_name}/export.json", json.dumps(export_json, indent=2, ensure_ascii=False))
-
-        # Extract and save screenshots
-        if video_file:
-            cap = cv2.VideoCapture(str(video_file))
-            fps = cap.get(cv2.CAP_PROP_FPS) or 30
+        # Build zip in memory
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            # Build export JSONL
+            export_lines = []
+            traj = []
             for step in steps:
-                frame_num = int(step.get('video_time', 0) * fps)
-                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                frame_num = max(0, min(frame_num, total_frames - 1))
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
-                ret, frame = cap.read()
-                if ret:
-                    _, buffer = cv2.imencode('.png', frame)
-                    zf.writestr(f"{folder_name}/step_{step['index']}.png", buffer.tobytes())
-            cap.release()
+                code = step.get('code', '')
+                coord = step.get('coordinate', {})
+                x, y = coord.get('x', 0), coord.get('y', 0)
+                action = step.get('action', '')
 
-    buf.seek(0)
-    return Response(
-        buf.getvalue(),
-        mimetype='application/zip',
-        headers={'Content-Disposition': f'attachment; filename={folder_name}.zip'}
-    )
+                traj.append({
+                    'index': step['index'],
+                    'action_type': action,
+                    'code': code,
+                    'screenshot': f"step_{step['index']}.png",
+                    'coordinate': coord,
+                    'justification': step.get('justification', ''),
+                    'description': step.get('description', ''),
+                })
+                export_lines.append(json.dumps({
+                    'action': action,
+                    'coordinate': coord,
+                    'justification': step.get('justification', ''),
+                    'description': step.get('description', ''),
+                    'code': code,
+                }, ensure_ascii=False))
+
+            # Write jsonl
+            zf.writestr(f"{folder_name}/events.jsonl", '\n'.join(export_lines) + '\n')
+
+            # Write export JSON
+            info = task_data.get('annotator_info', {})
+            query = ann.get('query', info.get('query', ''))
+            export_json = {
+                'folder_name': folder_name,
+                'query': query,
+                'instruction': query,
+                'annotator': info.get('username', ''),
+                'task_id': info.get('task_id', ''),
+                'mark': ann.get('mark'),
+                'scores': ann.get('scores', {}),
+                'pass_reason': ann.get('pass_reason', ''),
+                'step_by_step_instructions': ann.get('step_by_step_instructions', ''),
+                'knowledge_points': {
+                    'osworld_overlap': ann.get('osworld_overlap', []),
+                    'custom_nodes': ann.get('custom_nodes', []),
+                },
+                'related_apps': ann.get('related_apps', []),
+                'traj': traj,
+            }
+            zf.writestr(f"{folder_name}/export.json", json.dumps(export_json, indent=2, ensure_ascii=False))
+
+            # Extract and save screenshots
+            if video_file:
+                cap = cv2.VideoCapture(str(video_file))
+                fps = cap.get(cv2.CAP_PROP_FPS) or 30
+                for step in steps:
+                    frame_num = int(step.get('video_time', 0) * fps)
+                    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    frame_num = max(0, min(frame_num, total_frames - 1))
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+                    ret, frame = cap.read()
+                    if ret:
+                        _, buffer = cv2.imencode('.png', frame)
+                        zf.writestr(f"{folder_name}/step_{step['index']}.png", buffer.tobytes())
+                cap.release()
+
+        buf.seek(0)
+        return Response(
+            buf.getvalue(),
+            mimetype='application/zip',
+            headers={'Content-Disposition': f'attachment; filename={folder_name}.zip'}
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Export failed: {str(e)}'}), 500
 
 
 @app.route('/api/oss/export_all')
@@ -6880,6 +7330,7 @@ def api_oss_export_all():
             ann_key = f"{oss_folder}/{rec_name}"
             steps = task_data.get('steps', [])
             justification_edits = ann.get('justification_edits', {})
+            code_edits = ann.get('code_edits', {})
             deleted_steps = set(ann.get('deleted_steps', []))
 
             for step in steps:
@@ -6888,8 +7339,25 @@ def api_oss_export_all():
                 if adj_key_s in coord_adjustments:
                     adj = coord_adjustments[adj_key_s]
                     step['coordinate'] = {'x': adj['x'], 'y': adj['y']}
+                    # Regenerate code with adjusted coordinates
+                    x, y = adj['x'], adj['y']
+                    code = step.get('code', '')
+                    if 'doubleClick' in code:
+                        step['code'] = f"pyautogui.doubleClick({x}, {y})"
+                    elif 'rightClick' in code:
+                        step['code'] = f"pyautogui.rightClick({x}, {y})"
+                    elif 'clicks=3' in code:
+                        step['code'] = f"pyautogui.click({x}, {y}, clicks=3)"
+                    elif 'click' in code.lower() and 'pyautogui.click' in code:
+                        step['code'] = f"pyautogui.click({x}, {y})"
+                    elif 'moveTo' in code and 'dragTo' in code:
+                        match = re.search(r'dragTo\((\d+),\s*(\d+)\)', code)
+                        if match:
+                            step['code'] = f"pyautogui.moveTo({x}, {y}); pyautogui.dragTo({match.group(1)}, {match.group(2)})"
                 if si in justification_edits:
                     step['justification'] = justification_edits[si]
+                if si in code_edits:
+                    step['code'] = code_edits[si]
 
             # Filter out deleted steps
             if deleted_steps:
@@ -7075,7 +7543,13 @@ def api_oss_ai_check_status():
 @app.route('/oss_review/<path:folder_name>')
 def oss_review_page(folder_name):
     """Review page for a single OSS recording."""
-    return render_template_string(OSS_REVIEW_TEMPLATE, folder_name=folder_name)
+    return render_template_string(OSS_REVIEW_TEMPLATE, folder_name=folder_name, page_mode='reviewer')
+
+
+@app.route('/annotator/<path:folder_name>')
+def annotator_page(folder_name):
+    """Annotator page - shows reviewer error marks, allows corrections. No AI check access."""
+    return render_template_string(OSS_REVIEW_TEMPLATE, folder_name=folder_name, page_mode='annotator')
 
 
 # ============================================================================
@@ -7086,7 +7560,7 @@ DIRECT_ACCESS_TEMPLATE = '''
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Case Editor - Direct Access</title>
+    <title>Annotator Entrance</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -7187,8 +7661,8 @@ DIRECT_ACCESS_TEMPLATE = '''
 </head>
 <body>
     <div class="access-card">
-        <h1>Case Editor</h1>
-        <div class="subtitle">Direct access to view and edit a specific recording case</div>
+        <h1 style="color:#ff9800;">Annotator Entrance</h1>
+        <div class="subtitle">Enter your folder, case ID and username to view reviewer feedback and correct errors</div>
 
         <div class="form-group">
             <label>OSS Folder</label>
@@ -7212,9 +7686,9 @@ DIRECT_ACCESS_TEMPLATE = '''
         <div class="error-msg" id="errorMsg"></div>
 
         <div class="info-box">
-            <b>Note:</b> This page provides limited access to a single recording case for review and editing.
-            You can only access cases assigned to your username. After making corrections, your changes
-            are saved automatically.
+            <b>Note:</b> This page is for annotators to view reviewer feedback and correct errors in their recordings.
+            You can only access cases assigned to your username. Steps marked as errors by the reviewer
+            will be highlighted — fix them and your changes are saved automatically.
         </div>
     </div>
 
@@ -7265,8 +7739,8 @@ DIRECT_ACCESS_TEMPLATE = '''
                     return;
                 }
 
-                // Redirect to the review page in direct mode
-                window.location.href = '/oss_review/' + encodeURIComponent(caseId) +
+                // Redirect to the annotator page in direct mode
+                window.location.href = '/annotator/' + encodeURIComponent(caseId) +
                     '?folder=' + encodeURIComponent(folder) + '&direct=1';
             } catch (err) {
                 errEl.textContent = 'Connection error: ' + err.message;
