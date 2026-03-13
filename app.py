@@ -3047,7 +3047,6 @@ DASHBOARD_TEMPLATE = '''
         <h1>OSS Recording Dashboard</h1>
         <div class="header-controls">
             <a href="/" class="nav-link">&#8592; Local Review</a>
-            <a href="/edit" class="nav-link" style="border-color:#ff9800;color:#ff9800;">Annotator Entrance</a>
             <input type="text" id="ossFolder" value="recordings_0303" placeholder="OSS upload folder..." />
             <button class="btn-load" id="loadBtn" onclick="loadDashboard()">Load</button>
             <label class="auto-poll-label">
@@ -3219,8 +3218,7 @@ DASHBOARD_TEMPLATE = '''
                     '</div>' +
                     '<div class="task-actions">' +
                     '<span class="review-badge ' + statusClass + '">' + statusLabel + '</span>' +
-                    '<a class="btn-view" href="/oss_review/' + encodeURIComponent(rec.folder_name) + '?folder=' + encodeURIComponent(folder) + '">Review</a>' +
-                    '<a class="btn-view" style="background:#ff9800;border-color:#ff9800;" href="/annotator/' + encodeURIComponent(rec.folder_name) + '?folder=' + encodeURIComponent(folder) + '" title="Copy this link for annotator">Annotator</a>' +
+                    '<a class="btn-view" href="/oss_review/' + encodeURIComponent(rec.folder_name) + '?folder=' + encodeURIComponent(folder) + '">View</a>' +
                     '</div></div>';
             });
 
