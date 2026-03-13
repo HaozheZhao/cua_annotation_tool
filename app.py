@@ -266,6 +266,16 @@ def load_task_data(task_id):
         # Build pyautogui code
         action = ce.get('action', '')
         description = ve.get('description', ce.get('description', ''))
+
+        # Normalize ambiguous action types based on description content
+        if action == 'mouse_press':
+            if '⌨️ Press:' in description:
+                action = 'press'
+            elif '⌨️ Type:' in description:
+                action = 'type'
+            else:
+                action = 'click'  # actual mouse press → treat as click
+
         code = build_pyautogui_code(action, ce, description)
 
         # Only show coordinate marker for actions that have meaningful coordinates
@@ -900,6 +910,16 @@ def load_oss_task_data(local_dir):
 
         action = ce.get('action', '')
         description = ve.get('description', ce.get('description', ''))
+
+        # Normalize ambiguous action types based on description content
+        if action == 'mouse_press':
+            if '⌨️ Press:' in description:
+                action = 'press'
+            elif '⌨️ Type:' in description:
+                action = 'type'
+            else:
+                action = 'click'
+
         code = build_pyautogui_code(action, ce, description)
         has_coordinate = action in ('click', 'drag', 'scroll') and (x != 0 or y != 0)
 
