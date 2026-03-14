@@ -732,6 +732,7 @@ def _run_ai_check_thread(ann_key, oss_folder, folder_name):
         code_edits = ann.get('code_edits', {})
         video_time_edits = ann.get('video_time_edits', {})
         deleted_steps = set(ann.get('deleted_steps', []))
+        coord_adjustments = load_oss_coord_adjustments()
 
         steps = task_data.get('steps', [])
         for step in steps:
@@ -739,10 +740,30 @@ def _run_ai_check_thread(ann_key, oss_folder, folder_name):
             si = str(step['index'])
             if si in justification_edits:
                 step['justification'] = justification_edits[si]
-            if si in code_edits:
-                step['code'] = code_edits[si]
             if si in video_time_edits:
                 step['video_time'] = video_time_edits[si]
+            # Apply coord adjustments and regenerate code
+            adj_key_s = f"{ann_key}_{step['index']}"
+            if adj_key_s in coord_adjustments:
+                adj = coord_adjustments[adj_key_s]
+                step['coordinate'] = {'x': adj['x'], 'y': adj['y']}
+                x, y = adj['x'], adj['y']
+                code = step.get('code', '')
+                if 'doubleClick' in code:
+                    step['code'] = f"pyautogui.doubleClick({x}, {y})"
+                elif 'rightClick' in code:
+                    step['code'] = f"pyautogui.rightClick({x}, {y})"
+                elif 'clicks=3' in code:
+                    step['code'] = f"pyautogui.click({x}, {y}, clicks=3)"
+                elif 'click' in code.lower() and 'pyautogui.click' in code:
+                    step['code'] = f"pyautogui.click({x}, {y})"
+                elif 'moveTo' in code and 'dragTo' in code:
+                    match = re.search(r'dragTo\((\d+),\s*(\d+)\)', code)
+                    if match:
+                        step['code'] = f"pyautogui.moveTo({x}, {y}); pyautogui.dragTo({match.group(1)}, {match.group(2)})"
+            # Code edits override everything (after coord regeneration)
+            if si in code_edits:
+                step['code'] = code_edits[si]
         steps = [s for s in steps if s['original_index'] not in deleted_steps]
 
         # Get query and instructions
@@ -6960,7 +6981,7 @@ def api_oss_task(folder_name):
         ann = oss_annotations.get(review_key, {})
         data['annotation'] = ann
 
-        # === Apply overlay: justification edits + code edits + video_time edits ===
+        # === Apply overlay: justification edits, video_time edits, original_index ===
         # Each step keeps its original_index so overlays reference the correct step
         justification_edits = ann.get('justification_edits', {})
         code_edits = ann.get('code_edits', {})
@@ -6970,8 +6991,6 @@ def api_oss_task(folder_name):
             si = str(step['index'])
             if si in justification_edits:
                 step['justification'] = justification_edits[si]
-            if si in code_edits:
-                step['code'] = code_edits[si]
             if si in video_time_edits:
                 step['video_time'] = video_time_edits[si]
 
@@ -6980,7 +6999,7 @@ def api_oss_task(folder_name):
             if 'annotator_info' in data:
                 data['annotator_info']['query'] = ann['query']
 
-        # === Apply overlay: coordinate adjustments ===
+        # === Apply overlay: coordinate adjustments (regenerates code) ===
         coord_adjustments = load_oss_coord_adjustments()
         data['coord_adjustments'] = {}
         for step in data.get('steps', []):
@@ -7004,6 +7023,12 @@ def api_oss_task(folder_name):
                     match = re.search(r'dragTo\((\d+),\s*(\d+)\)', code)
                     if match:
                         step['code'] = f"pyautogui.moveTo({x}, {y}); pyautogui.dragTo({match.group(1)}, {match.group(2)})"
+
+        # === Apply overlay: code_edits AFTER coord adjustments (manual edits take priority) ===
+        for step in data.get('steps', []):
+            si = str(step['original_index'])
+            if si in code_edits:
+                step['code'] = code_edits[si]
 
         # === Apply overlay: filter deleted steps ===
         deleted_steps = set(ann.get('deleted_steps', []))
