@@ -730,6 +730,7 @@ def _run_ai_check_thread(ann_key, oss_folder, folder_name):
         ann = oss_annotations.get(ann_key, {})
         justification_edits = ann.get('justification_edits', {})
         code_edits = ann.get('code_edits', {})
+        video_time_edits = ann.get('video_time_edits', {})
         deleted_steps = set(ann.get('deleted_steps', []))
 
         steps = task_data.get('steps', [])
@@ -740,6 +741,8 @@ def _run_ai_check_thread(ann_key, oss_folder, folder_name):
                 step['justification'] = justification_edits[si]
             if si in code_edits:
                 step['code'] = code_edits[si]
+            if si in video_time_edits:
+                step['video_time'] = video_time_edits[si]
         steps = [s for s in steps if s['original_index'] not in deleted_steps]
 
         # Get query and instructions
@@ -3254,6 +3257,7 @@ DASHBOARD_TEMPLATE = '''
                 '<span class="stat-badge reviewed">' + data.reviewed + '</span>' +
                 '<span class="stat-badge rejected">' + data.rejected + '</span>' +
                 '<span class="stat-badge unreviewed">' + data.unreviewed + '</span>' +
+                (data.error_steps > 0 ? '<span class="stat-badge" style="background:rgba(244,67,54,0.15);color:#f44336;border:1px solid rgba(244,67,54,0.3);">' + data.corrected_steps + '/' + data.error_steps + ' fixed</span>' : '') +
                 '</div></div>' +
                 '<div class="annotator-progress">' +
                 '<div class="progress-track">' +
@@ -4345,6 +4349,49 @@ OSS_REVIEW_TEMPLATE = '''
             border-left: 3px solid #f44336;
         }
 
+        /* Frame adjustment */
+        .frame-adjust-controls {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 0;
+            margin-top: 2px;
+        }
+        .frame-btn {
+            padding: 2px 8px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background: #1a1a2e;
+            color: #00d9ff;
+            cursor: pointer;
+            font-size: 0.75em;
+            transition: all 0.2s;
+        }
+        .frame-btn:hover { background: #00d9ff; color: #000; }
+        .frame-time {
+            color: #888;
+            font-size: 0.72em;
+            min-width: 70px;
+            text-align: center;
+            font-family: monospace;
+        }
+
+        /* Version grouping in sidebar */
+        .version-toggle {
+            padding: 2px 12px 2px 28px;
+            color: #666;
+            font-size: 0.7em;
+            cursor: pointer;
+            user-select: none;
+        }
+        .version-toggle:hover { color: #00d9ff; }
+        .rec-item.older-version {
+            opacity: 0.55;
+            font-size: 0.85em;
+            border-left: 2px solid #333;
+            margin-left: 8px;
+        }
+
         /* AI Check */
         .btn-ai-check {
             padding: 5px 14px;
@@ -4738,6 +4785,18 @@ OSS_REVIEW_TEMPLATE = '''
 
         // Track which person groups are expanded
         let expandedPersons = {};
+        let expandedVersionGroups = {};
+
+        function getTaskBase(taskId) {
+            const match = taskId.match(/^(.+)_(\d{3})$/);
+            if (match) return { base: match[1], version: parseInt(match[2]) };
+            return { base: taskId, version: -1 };
+        }
+
+        function toggleVersionGroup(baseKey) {
+            expandedVersionGroups[baseKey] = !expandedVersionGroups[baseKey];
+            renderRecordingSidebar();
+        }
 
         function hashColor(str) {
             let hash = 0;
@@ -4790,16 +4849,56 @@ OSS_REVIEW_TEMPLATE = '''
                 html += '</span></div>';
 
                 html += '<div class="person-tasks' + (isExpanded ? ' expanded' : '') + '" id="ptasks-' + user + '">';
+
+                // Group by task base name for versioning
+                const versionGroups = {};
                 recs.forEach(rec => {
-                    const isActive = rec.folder_name === folderName;
-                    const status = rec.review_status || 'unreviewed';
-                    const statusLabel = status.charAt(0).toUpperCase() + status.slice(1);
-                    const title = rec.task_id || rec.folder_name.substring(0, 30);
-                    html += '<div class="rec-item ' + status + (isActive ? ' active' : '') + '" ' +
-                        'onclick="switchRecording(\\'' + rec.folder_name.replace(/'/g, "\\\\'") + '\\')">' +
-                        '<div class="rec-title" title="' + rec.folder_name + '">' + title + '</div>' +
-                        '<span class="rec-status ' + status + '">' + statusLabel + '</span>' +
+                    const tid = rec.task_id || rec.folder_name;
+                    const parsed = getTaskBase(tid);
+                    if (!versionGroups[parsed.base]) versionGroups[parsed.base] = [];
+                    versionGroups[parsed.base].push({ rec: rec, version: parsed.version });
+                });
+
+                Object.keys(versionGroups).sort().forEach(base => {
+                    const versions = versionGroups[base];
+                    versions.sort((a, b) => b.version - a.version); // newest first
+                    const newest = versions[0];
+                    const hasOlder = versions.length > 1;
+
+                    // Render newest version
+                    const nRec = newest.rec;
+                    const nIsActive = nRec.folder_name === folderName;
+                    const nStatus = nRec.review_status || 'unreviewed';
+                    const nStatusLabel = nStatus.charAt(0).toUpperCase() + nStatus.slice(1);
+                    const nTitle = nRec.task_id || nRec.folder_name.substring(0, 30);
+                    html += '<div class="rec-item ' + nStatus + (nIsActive ? ' active' : '') + '" ' +
+                        'onclick="switchRecording(\\'' + nRec.folder_name.replace(/'/g, "\\\\'") + '\\')">' +
+                        '<div class="rec-title" title="' + nRec.folder_name + '">' + nTitle + '</div>' +
+                        '<span class="rec-status ' + nStatus + '">' + nStatusLabel + '</span>' +
                         '</div>';
+
+                    // Older versions toggle
+                    if (hasOlder) {
+                        const safeBase = base.replace(/'/g, "\\\\'");
+                        const vExpanded = !!expandedVersionGroups[base];
+                        html += '<div class="version-toggle" onclick="event.stopPropagation();toggleVersionGroup(\\'' + safeBase + '\\')">';
+                        html += (vExpanded ? '&#9660; ' : '&#9654; ') + (versions.length - 1) + ' older version(s)';
+                        html += '</div>';
+                        if (vExpanded) {
+                            versions.slice(1).forEach(v => {
+                                const oRec = v.rec;
+                                const oIsActive = oRec.folder_name === folderName;
+                                const oStatus = oRec.review_status || 'unreviewed';
+                                const oStatusLabel = oStatus.charAt(0).toUpperCase() + oStatus.slice(1);
+                                const oTitle = oRec.task_id || oRec.folder_name.substring(0, 30);
+                                html += '<div class="rec-item older-version ' + oStatus + (oIsActive ? ' active' : '') + '" ' +
+                                    'onclick="switchRecording(\\'' + oRec.folder_name.replace(/'/g, "\\\\'") + '\\')">' +
+                                    '<div class="rec-title" title="' + oRec.folder_name + '">' + oTitle + '</div>' +
+                                    '<span class="rec-status ' + oStatus + '">' + oStatusLabel + '</span>' +
+                                    '</div>';
+                            });
+                        }
+                    }
                 });
                 html += '</div></div>';
             });
@@ -5072,6 +5171,15 @@ OSS_REVIEW_TEMPLATE = '''
                 html += '<div class="stacked-img-container" id="stacked-img-' + idx + '" onclick="event.stopPropagation();handleStackedImageClick(event,' + idx + ')">';
                 html += '<img id="stacked-img-el-' + idx + '" src="' + imgUrl + '" data-idx="' + idx + '" />';
                 html += '<svg class="drag-line" id="stacked-drag-' + idx + '" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;"><line id="stacked-dragline-' + idx + '" /><polygon id="stacked-dragarrow-' + idx + '" /></svg>';
+                html += '</div>';
+
+                // Frame adjustment controls
+                html += '<div class="frame-adjust-controls">';
+                html += '<button class="frame-btn" onclick="event.stopPropagation();shiftFrame(' + idx + ',-0.2)" title="-0.2s">&#9664;&#9664;</button>';
+                html += '<button class="frame-btn" onclick="event.stopPropagation();shiftFrame(' + idx + ',-0.05)" title="-0.05s">&#9664;</button>';
+                html += '<span class="frame-time" id="frame-time-' + idx + '">t=' + step.video_time.toFixed(2) + 's</span>';
+                html += '<button class="frame-btn" onclick="event.stopPropagation();shiftFrame(' + idx + ',0.05)" title="+0.05s">&#9654;</button>';
+                html += '<button class="frame-btn" onclick="event.stopPropagation();shiftFrame(' + idx + ',0.2)" title="+0.2s">&#9654;&#9654;</button>';
                 html += '</div>';
 
                 // Code - editable for type/press operations
@@ -5582,6 +5690,15 @@ OSS_REVIEW_TEMPLATE = '''
             html += '<svg class="drag-line" id="detailDragSvg" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;"><line id="detailDragLine" /><polygon id="detailDragArrow" /></svg>';
             html += '</div>';
 
+            // Frame adjustment controls
+            html += '<div class="frame-adjust-controls">';
+            html += '<button class="frame-btn" onclick="shiftFrame(' + idx + ',-0.2)" title="-0.2s">&#9664;&#9664;</button>';
+            html += '<button class="frame-btn" onclick="shiftFrame(' + idx + ',-0.05)" title="-0.05s">&#9664;</button>';
+            html += '<span class="frame-time" id="detail-frame-time">t=' + step.video_time.toFixed(2) + 's</span>';
+            html += '<button class="frame-btn" onclick="shiftFrame(' + idx + ',0.05)" title="+0.05s">&#9654;</button>';
+            html += '<button class="frame-btn" onclick="shiftFrame(' + idx + ',0.2)" title="+0.2s">&#9654;&#9654;</button>';
+            html += '</div>';
+
             // Error banner in detail
             const hasDetailError = !!stepErrors[String(origIdx)];
             if (hasDetailError) {
@@ -6071,6 +6188,51 @@ OSS_REVIEW_TEMPLATE = '''
                     });
                 } catch (err) { console.error('Save code failed:', err); }
             }
+        }
+
+        let _frameShiftTimer = null;
+        function shiftFrame(stepIdx, delta) {
+            const step = taskData && taskData.steps[stepIdx];
+            if (!step) return;
+            step.video_time = Math.max(0, step.video_time + delta);
+            const origIdx = step.original_index != null ? step.original_index : stepIdx;
+            const newUrl = '/oss_frame/' + encodeURIComponent(folderName) + '/' + step.video_time + '?folder=' + encodeURIComponent(ossFolder);
+
+            // Update stacked view image
+            const stackedImg = document.getElementById('stacked-img-el-' + stepIdx);
+            if (stackedImg) {
+                stackedImg.src = newUrl;
+                // Re-add markers after image loads
+                stackedImg.onload = function() {
+                    const videoWidth = taskData.video_width || 1920;
+                    const videoHeight = taskData.video_height || 1080;
+                    addMarkersToContainer('stacked-img-' + stepIdx, stackedImg, step, videoWidth, videoHeight);
+                };
+            }
+            // Update detail overlay image
+            const detailImg = document.getElementById('detailImg');
+            if (detailImg && detailStepIdx === stepIdx) detailImg.src = newUrl;
+
+            // Update time displays
+            const stackedTime = document.getElementById('frame-time-' + stepIdx);
+            if (stackedTime) stackedTime.textContent = 't=' + step.video_time.toFixed(2) + 's';
+            const detailTime = document.getElementById('detail-frame-time');
+            if (detailTime && detailStepIdx === stepIdx) detailTime.textContent = 't=' + step.video_time.toFixed(2) + 's';
+
+            // Debounced save
+            clearTimeout(_frameShiftTimer);
+            _frameShiftTimer = setTimeout(async () => {
+                try {
+                    await fetch('/api/oss/update_video_time', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            folder_name: folderName, oss_folder: ossFolder,
+                            step_index: origIdx, video_time: step.video_time
+                        })
+                    });
+                } catch (err) { console.error('Save video time failed:', err); }
+            }, 300);
         }
 
         async function saveQuery(value) {
@@ -6672,6 +6834,24 @@ def _fetch_dashboard_data(folder):
             '_upload_ts': upload_ts,
         })
 
+    # Enrich with error/correction stats from annotations
+    oss_annotations_all = load_oss_annotations()
+    for username, ann_data in annotators.items():
+        error_total = 0
+        corrected_total = 0
+        for rec in ann_data.get('recordings', []):
+            rec_ann_key = f"{folder}/{rec['folder_name']}"
+            rec_ann = oss_annotations_all.get(rec_ann_key, {})
+            step_errors = rec_ann.get('step_errors', {})
+            just_edits = rec_ann.get('justification_edits', {})
+            code_edits_r = rec_ann.get('code_edits', {})
+            error_total += len(step_errors)
+            for si in step_errors:
+                if si in just_edits or si in code_edits_r:
+                    corrected_total += 1
+        ann_data['error_steps'] = error_total
+        ann_data['corrected_steps'] = corrected_total
+
     result = {'annotators': annotators, 'folder': folder, '_timestamp': time.time()}
     _dashboard_cache[folder] = result
     return result
@@ -6780,10 +6960,11 @@ def api_oss_task(folder_name):
         ann = oss_annotations.get(review_key, {})
         data['annotation'] = ann
 
-        # === Apply overlay: justification edits + code edits ===
+        # === Apply overlay: justification edits + code edits + video_time edits ===
         # Each step keeps its original_index so overlays reference the correct step
         justification_edits = ann.get('justification_edits', {})
         code_edits = ann.get('code_edits', {})
+        video_time_edits = ann.get('video_time_edits', {})
         for step in data.get('steps', []):
             step['original_index'] = step['index']  # preserve original index
             si = str(step['index'])
@@ -6791,6 +6972,8 @@ def api_oss_task(folder_name):
                 step['justification'] = justification_edits[si]
             if si in code_edits:
                 step['code'] = code_edits[si]
+            if si in video_time_edits:
+                step['video_time'] = video_time_edits[si]
 
         # === Apply overlay: query edit ===
         if 'query' in ann and ann['query']:
@@ -7046,6 +7229,28 @@ def api_oss_update_code():
     return jsonify({'success': True})
 
 
+@app.route('/api/oss/update_video_time', methods=['POST'])
+def api_oss_update_video_time():
+    """Save adjusted video timestamp for a step's screenshot."""
+    data = request.json
+    folder_name = data.get('folder_name', '')
+    oss_folder = data.get('oss_folder', 'recordings_0303')
+    step_index = data.get('step_index')
+    video_time = data.get('video_time', 0)
+
+    ann_key = f"{oss_folder}/{folder_name}"
+    oss_annotations = load_oss_annotations()
+    existing = oss_annotations.get(ann_key, {})
+    edits = existing.get('video_time_edits', {})
+    edits[str(step_index)] = video_time
+    existing['video_time_edits'] = edits
+    oss_annotations[ann_key] = existing
+    save_oss_annotations(oss_annotations)
+
+    _sync_overlay_to_oss(oss_folder, folder_name)
+    return jsonify({'success': True})
+
+
 @app.route('/api/oss/update_query', methods=['POST'])
 def api_oss_update_query():
     """Save edited query for an OSS recording.
@@ -7189,10 +7394,11 @@ def api_oss_export_case(folder_name):
         ann = oss_annotations.get(ann_key, {})
         coord_adjustments = load_oss_coord_adjustments()
 
-        # Apply overlay: coord adjustments, justification edits, code edits, deleted steps
+        # Apply overlay: coord adjustments, justification edits, code edits, video_time edits, deleted steps
         steps = task_data.get('steps', [])
         justification_edits = ann.get('justification_edits', {})
         code_edits = ann.get('code_edits', {})
+        video_time_edits = ann.get('video_time_edits', {})
         deleted_steps = set(ann.get('deleted_steps', []))
         for step in steps:
             si = str(step['index'])
@@ -7220,6 +7426,8 @@ def api_oss_export_case(folder_name):
             # Code edits override everything (including coord-regenerated code)
             if si in code_edits:
                 step['code'] = code_edits[si]
+            if si in video_time_edits:
+                step['video_time'] = video_time_edits[si]
 
         # Filter out deleted steps
         if deleted_steps:
@@ -7349,6 +7557,7 @@ def api_oss_export_all():
             steps = task_data.get('steps', [])
             justification_edits = ann.get('justification_edits', {})
             code_edits = ann.get('code_edits', {})
+            video_time_edits = ann.get('video_time_edits', {})
             deleted_steps = set(ann.get('deleted_steps', []))
 
             for step in steps:
@@ -7357,7 +7566,6 @@ def api_oss_export_all():
                 if adj_key_s in coord_adjustments:
                     adj = coord_adjustments[adj_key_s]
                     step['coordinate'] = {'x': adj['x'], 'y': adj['y']}
-                    # Regenerate code with adjusted coordinates
                     x, y = adj['x'], adj['y']
                     code = step.get('code', '')
                     if 'doubleClick' in code:
@@ -7376,6 +7584,8 @@ def api_oss_export_all():
                     step['justification'] = justification_edits[si]
                 if si in code_edits:
                     step['code'] = code_edits[si]
+                if si in video_time_edits:
+                    step['video_time'] = video_time_edits[si]
 
             # Filter out deleted steps
             if deleted_steps:
@@ -7570,9 +7780,259 @@ def annotator_page(folder_name):
     return render_template_string(OSS_REVIEW_TEMPLATE, folder_name=folder_name, page_mode='annotator')
 
 
+@app.route('/annotator_dashboard')
+def annotator_dashboard():
+    """Dashboard for annotators to see all their tasks and reviewer feedback."""
+    return render_template_string(ANNOTATOR_DASHBOARD_TEMPLATE)
+
+
+@app.route('/api/oss/annotator_tasks')
+def api_oss_annotator_tasks():
+    """List all tasks for a specific annotator with error/correction status."""
+    folder = request.args.get('folder', '')
+    username = request.args.get('user', '')
+
+    if not folder or not username:
+        return jsonify({'error': 'Missing folder or user'})
+
+    try:
+        cached = _dashboard_cache.get(folder)
+        if not cached:
+            cached = _fetch_dashboard_data(folder)
+
+        annotators = cached.get('annotators', {})
+        user_data = None
+        for uname, data in annotators.items():
+            if uname.lower() == username.lower():
+                user_data = data
+                break
+
+        if not user_data:
+            return jsonify({'error': f'No recordings found for user: {username}', 'recordings': []})
+
+        oss_annotations = load_oss_annotations()
+        recordings = []
+        for rec in user_data.get('recordings', []):
+            ann_key = f"{folder}/{rec['folder_name']}"
+            ann = oss_annotations.get(ann_key, {})
+            rec_data = dict(rec)
+            rec_data['error_count'] = len(ann.get('step_errors', {}))
+            rec_data['has_ai_results'] = ann.get('ai_check_results', {}).get('status') == 'completed'
+            rec_data['has_corrections'] = bool(ann.get('justification_edits') or ann.get('code_edits'))
+            recordings.append(rec_data)
+
+        return jsonify({'recordings': recordings, 'username': username})
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+
 # ============================================================================
 # Direct Access Page - Limited access for annotators to fix specific cases
 # ============================================================================
+
+ANNOTATOR_DASHBOARD_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Annotator Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a14;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            padding: 16px 24px;
+            border-bottom: 2px solid #ff9800;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .header h1 { font-size: 1.3em; color: #ff9800; }
+        .header-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .header-form input {
+            padding: 8px 12px;
+            border: 1px solid #444;
+            border-radius: 6px;
+            background: #0d1117;
+            color: #e0e0e0;
+            font-size: 0.9em;
+            width: 220px;
+        }
+        .header-form input:focus { border-color: #ff9800; outline: none; }
+        .header-form button {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 6px;
+            background: #ff9800;
+            color: #000;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .header-form button:hover { background: #ffb74d; }
+        .header-form button:disabled { background: #555; color: #888; cursor: not-allowed; }
+        .back-link { color: #888; text-decoration: none; font-size: 0.85em; border: 1px solid #555; padding: 5px 12px; border-radius: 4px; }
+        .back-link:hover { color: #ff9800; border-color: #ff9800; }
+        .content { max-width: 1200px; margin: 20px auto; padding: 0 20px; }
+        .summary-bar {
+            display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap;
+        }
+        .summary-stat {
+            background: #16213e; border-radius: 8px; padding: 12px 20px;
+            border: 1px solid #252542; text-align: center; min-width: 120px;
+        }
+        .summary-stat .num { font-size: 1.6em; font-weight: bold; color: #00d9ff; }
+        .summary-stat .label { font-size: 0.75em; color: #888; margin-top: 2px; }
+        .task-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+            gap: 12px;
+        }
+        .task-card {
+            background: #16213e;
+            border: 1px solid #252542;
+            border-radius: 8px;
+            padding: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .task-card:hover { border-color: #ff9800; transform: translateY(-2px); box-shadow: 0 4px 15px rgba(255,152,0,0.15); }
+        .task-card.has-errors { border-left: 3px solid #f44336; }
+        .task-card .task-title { color: #e0e0e0; font-weight: bold; font-size: 0.9em; word-break: break-all; }
+        .task-card .task-query { color: #888; font-size: 0.8em; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .task-card .task-badges { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+        .task-card .badge {
+            padding: 2px 8px; border-radius: 10px; font-size: 0.72em; font-weight: bold;
+        }
+        .badge.reviewed { background: rgba(76,175,80,0.2); color: #4caf50; }
+        .badge.rejected { background: rgba(244,67,54,0.2); color: #f44336; }
+        .badge.unreviewed { background: rgba(136,136,136,0.2); color: #888; }
+        .badge.errors { background: rgba(244,67,54,0.2); color: #f44336; }
+        .badge.ai { background: rgba(156,39,176,0.2); color: #ce93d8; }
+        .badge.corrected { background: rgba(33,150,243,0.2); color: #42a5f5; }
+        .error-msg { color: #f44336; text-align: center; padding: 20px; }
+        .loading { color: #888; text-align: center; padding: 40px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Annotator Dashboard</h1>
+        <div class="header-form">
+            <input type="text" id="ossFolder" placeholder="OSS Folder (e.g. recordings_0303)" />
+            <input type="text" id="username" placeholder="Your username" />
+            <button id="loadBtn" onclick="loadTasks()">Load My Tasks</button>
+        </div>
+        <a class="back-link" href="/edit">Single Task Access</a>
+    </div>
+    <div class="content">
+        <div id="summaryBar" class="summary-bar" style="display:none;"></div>
+        <div id="taskGrid" class="task-grid">
+            <div class="loading">Enter your OSS folder and username, then click "Load My Tasks"</div>
+        </div>
+    </div>
+
+    <script>
+        // Auto-fill from URL params
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('folder')) document.getElementById('ossFolder').value = params.get('folder');
+        if (params.get('user')) document.getElementById('username').value = params.get('user');
+
+        // Auto-load if both params present
+        if (params.get('folder') && params.get('user')) loadTasks();
+
+        async function loadTasks() {
+            const folder = document.getElementById('ossFolder').value.trim();
+            const user = document.getElementById('username').value.trim();
+            if (!folder || !user) { alert('Both fields required'); return; }
+
+            const btn = document.getElementById('loadBtn');
+            btn.disabled = true;
+            btn.textContent = 'Loading...';
+            document.getElementById('taskGrid').innerHTML = '<div class="loading">Loading your tasks...</div>';
+
+            try {
+                const resp = await fetch('/api/oss/annotator_tasks?folder=' + encodeURIComponent(folder) + '&user=' + encodeURIComponent(user));
+                const data = await resp.json();
+
+                if (data.error) {
+                    document.getElementById('taskGrid').innerHTML = '<div class="error-msg">' + data.error + '</div>';
+                    document.getElementById('summaryBar').style.display = 'none';
+                    return;
+                }
+
+                const recs = data.recordings || [];
+                // Update URL
+                history.replaceState(null, '', '/annotator_dashboard?folder=' + encodeURIComponent(folder) + '&user=' + encodeURIComponent(user));
+
+                // Summary
+                const total = recs.length;
+                const reviewed = recs.filter(r => r.review_status === 'reviewed').length;
+                const rejected = recs.filter(r => r.review_status === 'rejected').length;
+                const withErrors = recs.filter(r => r.error_count > 0).length;
+                const withAi = recs.filter(r => r.has_ai_results).length;
+                let summaryHtml = '';
+                summaryHtml += '<div class="summary-stat"><div class="num">' + total + '</div><div class="label">Total Tasks</div></div>';
+                summaryHtml += '<div class="summary-stat"><div class="num" style="color:#4caf50">' + reviewed + '</div><div class="label">Reviewed</div></div>';
+                summaryHtml += '<div class="summary-stat"><div class="num" style="color:#f44336">' + rejected + '</div><div class="label">Rejected</div></div>';
+                summaryHtml += '<div class="summary-stat"><div class="num" style="color:#ff9800">' + withErrors + '</div><div class="label">With Errors</div></div>';
+                if (withAi > 0) summaryHtml += '<div class="summary-stat"><div class="num" style="color:#ce93d8">' + withAi + '</div><div class="label">AI Checked</div></div>';
+                document.getElementById('summaryBar').innerHTML = summaryHtml;
+                document.getElementById('summaryBar').style.display = 'flex';
+
+                // Task cards - group by version, show newest first
+                function getBase(tid) {
+                    const m = tid.match(/^(.+)_(\d{3})$/);
+                    return m ? { base: m[1], ver: parseInt(m[2]) } : { base: tid, ver: -1 };
+                }
+                const groups = {};
+                recs.forEach(rec => {
+                    const tid = rec.task_id || rec.folder_name;
+                    const p = getBase(tid);
+                    if (!groups[p.base]) groups[p.base] = [];
+                    groups[p.base].push({ rec, ver: p.ver });
+                });
+
+                let gridHtml = '';
+                Object.keys(groups).sort().forEach(base => {
+                    const vers = groups[base];
+                    vers.sort((a, b) => b.ver - a.ver);
+                    vers.forEach((v, vi) => {
+                        const rec = v.rec;
+                        const tid = rec.task_id || rec.folder_name;
+                        const status = rec.review_status || 'unreviewed';
+                        const hasErr = rec.error_count > 0;
+                        const cardUrl = '/annotator/' + encodeURIComponent(rec.folder_name) + '?folder=' + encodeURIComponent(folder) + '&direct=1';
+                        gridHtml += '<div class="task-card' + (hasErr ? ' has-errors' : '') + (vi > 0 ? ' older-version' : '') + '" onclick="window.location.href=\\'' + cardUrl + '\\'">';
+                        gridHtml += '<div class="task-title">' + tid + '</div>';
+                        if (rec.query) gridHtml += '<div class="task-query">' + rec.query + '</div>';
+                        gridHtml += '<div class="task-badges">';
+                        gridHtml += '<span class="badge ' + status + '">' + status.charAt(0).toUpperCase() + status.slice(1) + '</span>';
+                        if (hasErr) gridHtml += '<span class="badge errors">' + rec.error_count + ' errors</span>';
+                        if (rec.has_ai_results) gridHtml += '<span class="badge ai">AI Checked</span>';
+                        if (rec.has_corrections) gridHtml += '<span class="badge corrected">Has Edits</span>';
+                        if (vi > 0) gridHtml += '<span class="badge unreviewed">Older Version</span>';
+                        gridHtml += '</div></div>';
+                    });
+                });
+
+                document.getElementById('taskGrid').innerHTML = gridHtml || '<div class="loading">No tasks found for this user</div>';
+            } catch (err) {
+                document.getElementById('taskGrid').innerHTML = '<div class="error-msg">Failed to load: ' + err.message + '</div>';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Load My Tasks';
+            }
+        }
+    </script>
+</body>
+</html>
+'''
 
 DIRECT_ACCESS_TEMPLATE = '''
 <!DOCTYPE html>
@@ -7707,6 +8167,8 @@ DIRECT_ACCESS_TEMPLATE = '''
             <b>Note:</b> This page is for annotators to view reviewer feedback and correct errors in their recordings.
             You can only access cases assigned to your username. Steps marked as errors by the reviewer
             will be highlighted — fix them and your changes are saved automatically.
+            <br><br>
+            <b>Want to see all your tasks?</b> <a href="/annotator_dashboard" style="color:#ff9800;">Open Annotator Dashboard</a>
         </div>
     </div>
 
