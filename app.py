@@ -5196,11 +5196,11 @@ OSS_REVIEW_TEMPLATE = '''
 
                 // Frame adjustment controls
                 html += '<div class="frame-adjust-controls">';
-                html += '<button class="frame-btn" onclick="event.stopPropagation();shiftFrame(' + idx + ',-0.2)" title="-0.2s">&#9664;&#9664;</button>';
-                html += '<button class="frame-btn" onclick="event.stopPropagation();shiftFrame(' + idx + ',-0.05)" title="-0.05s">&#9664;</button>';
+                html += '<button class="frame-btn" onclick="event.stopPropagation();shiftFrame(' + idx + ',-0.8)" title="-0.8s">&#9664;&#9664;</button>';
+                html += '<button class="frame-btn" onclick="event.stopPropagation();shiftFrame(' + idx + ',-0.2)" title="-0.2s">&#9664;</button>';
                 html += '<span class="frame-time" id="frame-time-' + idx + '">t=' + step.video_time.toFixed(2) + 's</span>';
-                html += '<button class="frame-btn" onclick="event.stopPropagation();shiftFrame(' + idx + ',0.05)" title="+0.05s">&#9654;</button>';
-                html += '<button class="frame-btn" onclick="event.stopPropagation();shiftFrame(' + idx + ',0.2)" title="+0.2s">&#9654;&#9654;</button>';
+                html += '<button class="frame-btn" onclick="event.stopPropagation();shiftFrame(' + idx + ',0.2)" title="+0.2s">&#9654;</button>';
+                html += '<button class="frame-btn" onclick="event.stopPropagation();shiftFrame(' + idx + ',0.8)" title="+0.8s">&#9654;&#9654;</button>';
                 html += '</div>';
 
                 // Code - editable for type/press operations
@@ -5713,11 +5713,11 @@ OSS_REVIEW_TEMPLATE = '''
 
             // Frame adjustment controls
             html += '<div class="frame-adjust-controls">';
-            html += '<button class="frame-btn" onclick="shiftFrame(' + idx + ',-0.2)" title="-0.2s">&#9664;&#9664;</button>';
-            html += '<button class="frame-btn" onclick="shiftFrame(' + idx + ',-0.05)" title="-0.05s">&#9664;</button>';
+            html += '<button class="frame-btn" onclick="shiftFrame(' + idx + ',-0.8)" title="-0.8s">&#9664;&#9664;</button>';
+            html += '<button class="frame-btn" onclick="shiftFrame(' + idx + ',-0.2)" title="-0.2s">&#9664;</button>';
             html += '<span class="frame-time" id="detail-frame-time">t=' + step.video_time.toFixed(2) + 's</span>';
-            html += '<button class="frame-btn" onclick="shiftFrame(' + idx + ',0.05)" title="+0.05s">&#9654;</button>';
-            html += '<button class="frame-btn" onclick="shiftFrame(' + idx + ',0.2)" title="+0.2s">&#9654;&#9654;</button>';
+            html += '<button class="frame-btn" onclick="shiftFrame(' + idx + ',0.2)" title="+0.2s">&#9654;</button>';
+            html += '<button class="frame-btn" onclick="shiftFrame(' + idx + ',0.8)" title="+0.8s">&#9654;&#9654;</button>';
             html += '</div>';
 
             // Error banner in detail
