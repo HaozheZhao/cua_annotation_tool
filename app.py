@@ -8294,47 +8294,33 @@ def api_oss_verify_access():
         import oss_client
 
         # Look up folder_name from task_id
-        # First: check cached dashboard data (fast)
-        matched_folder = None
+        # Load dashboard data (fetches from OSS if not cached) to get proper task_id mapping
         cached = _dashboard_cache.get(folder)
+        if not cached:
+            cached = _fetch_dashboard_data(folder)
+
+        matched_folder = None
+        matched_username = None
         if cached:
             for ann_data in cached.get('annotators', {}).values():
                 for rec in ann_data.get('recordings', []):
                     if rec.get('task_id', '') == task_id or rec.get('folder_name', '') == task_id:
                         matched_folder = rec['folder_name']
+                        matched_username = rec.get('_username', '')
                         break
                 if matched_folder:
                     break
 
-        # Fallback: search OSS recordings (slower, but works if cache is empty)
         if not matched_folder:
-            recordings = oss_client.list_recordings(folder)
-            for rec_name in recordings:
-                if rec_name == task_id:
-                    matched_folder = rec_name
-                    break
-                prefix = folder.rstrip('/') + '/' + rec_name
-                metadata = oss_client.get_recording_metadata(prefix)
-                if metadata and metadata.get('task_id', '') == task_id:
-                    matched_folder = rec_name
-                    break
-                if not metadata:
-                    parsed = oss_client.parse_folder_name_metadata(rec_name)
-                    if parsed.get('task_id', '') == task_id:
-                        matched_folder = rec_name
-                        break
+            return jsonify({'error': 'Task ID not found: ' + task_id + '. Please check the task ID and OSS folder name.'})
 
-        if not matched_folder:
-            return jsonify({'error': 'Task ID not found: ' + task_id + '. Please check the task ID and folder name.'})
-
-        # Now verify username
-        prefix = folder.rstrip('/') + '/' + matched_folder
-        metadata = oss_client.get_recording_metadata(prefix)
-        if metadata is None:
-            parsed = oss_client.parse_folder_name_metadata(matched_folder)
-            actual_username = parsed.get('username', 'Unknown')
-        else:
-            actual_username = metadata.get('username', 'Unknown')
+        # Verify username using cached data or OSS metadata
+        actual_username = matched_username or 'Unknown'
+        if actual_username == 'Unknown' or not actual_username:
+            prefix = folder.rstrip('/') + '/' + matched_folder
+            metadata = oss_client.get_recording_metadata(prefix)
+            if metadata:
+                actual_username = metadata.get('username', 'Unknown')
 
         # Verify username match (case-insensitive)
         if actual_username.lower() != username.lower() and actual_username != 'Unknown':
