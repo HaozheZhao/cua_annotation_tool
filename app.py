@@ -3256,7 +3256,7 @@ DASHBOARD_TEMPLATE = '''
                 tasksHtml +=
                     '<div class="task-entry">' +
                     '<div class="task-info">' +
-                    '<span class="task-id">' + (rec.task_id || rec.folder_name) + '</span>' +
+                    '<span class="task-id">' + (rec.task_name || rec.task_id || rec.folder_name) + '</span>' +
                     '<span class="task-query" title="' + query + '">' + query + '</span>' +
                     '<span class="task-date">' + date + '</span>' +
                     '</div>' +
@@ -4874,7 +4874,7 @@ OSS_REVIEW_TEMPLATE = '''
                 // Group by task base name for versioning
                 const versionGroups = {};
                 recs.forEach(rec => {
-                    const tid = rec.task_id || rec.folder_name;
+                    const tid = rec.task_name || rec.task_id || rec.folder_name;
                     const parsed = getTaskBase(tid);
                     if (!versionGroups[parsed.base]) versionGroups[parsed.base] = [];
                     versionGroups[parsed.base].push({ rec: rec, version: parsed.version });
@@ -4891,7 +4891,7 @@ OSS_REVIEW_TEMPLATE = '''
                     const nIsActive = nRec.folder_name === folderName;
                     const nStatus = nRec.review_status || 'unreviewed';
                     const nStatusLabel = nStatus.charAt(0).toUpperCase() + nStatus.slice(1);
-                    const nTitle = nRec.task_id || nRec.folder_name.substring(0, 30);
+                    const nTitle = nRec.task_name || nRec.task_id || nRec.folder_name.substring(0, 30);
                     html += '<div class="rec-item ' + nStatus + (nIsActive ? ' active' : '') + '" ' +
                         'onclick="switchRecording(\\'' + nRec.folder_name.replace(/'/g, "\\\\'") + '\\')">' +
                         '<div class="rec-title" title="' + nRec.folder_name + '">' + nTitle + '</div>' +
@@ -4911,7 +4911,7 @@ OSS_REVIEW_TEMPLATE = '''
                                 const oIsActive = oRec.folder_name === folderName;
                                 const oStatus = oRec.review_status || 'unreviewed';
                                 const oStatusLabel = oStatus.charAt(0).toUpperCase() + oStatus.slice(1);
-                                const oTitle = oRec.task_id || oRec.folder_name.substring(0, 30);
+                                const oTitle = oRec.task_name || oRec.task_id || oRec.folder_name.substring(0, 30);
                                 html += '<div class="rec-item older-version ' + oStatus + (oIsActive ? ' active' : '') + '" ' +
                                     'onclick="switchRecording(\\'' + oRec.folder_name.replace(/'/g, "\\\\'") + '\\')">' +
                                     '<div class="rec-title" title="' + oRec.folder_name + '">' + oTitle + '</div>' +
@@ -6835,6 +6835,20 @@ def _fetch_dashboard_data(folder):
             query = metadata.get('query', '')
             upload_ts = metadata.get('upload_timestamp', '')
 
+        # Also fetch task_name from task_name.json (the visible identifier)
+        task_name = ''
+        if rec_name in cached_recs:
+            task_name = cached_recs[rec_name].get('_task_name', '')
+        if not task_name:
+            try:
+                tn_key = folder.rstrip('/') + '/' + rec_name + '/task_name.json'
+                bucket = oss_client._get_bucket()
+                tn_result = bucket.get_object(tn_key)
+                tn_data = json.loads(tn_result.read().decode('utf-8'))
+                task_name = tn_data.get('task_name', '')
+            except Exception:
+                task_name = ''
+
         if username not in annotators:
             annotators[username] = {
                 'total': 0, 'reviewed': 0, 'rejected': 0, 'unreviewed': 0,
@@ -6846,11 +6860,13 @@ def _fetch_dashboard_data(folder):
         annotators[username]['recordings'].append({
             'folder_name': rec_name,
             'task_id': task_id,
+            'task_name': task_name,
             'query': query,
             'upload_timestamp': upload_ts,
             'review_status': rec_review_status,
             '_username': username,
             '_task_id': task_id,
+            '_task_name': task_name,
             '_query': query,
             '_upload_ts': upload_ts,
         })
@@ -6925,6 +6941,7 @@ def api_oss_folder_recordings():
                 recordings.append({
                     'folder_name': rec['folder_name'],
                     'task_id': rec.get('task_id', ''),
+                    'task_name': rec.get('task_name', ''),
                     'query': rec.get('query', ''),
                     'username': rec.get('_username', ''),
                     'review_status': review_statuses.get(review_key, 'unreviewed'),
@@ -8017,7 +8034,7 @@ ANNOTATOR_DASHBOARD_TEMPLATE = '''
                 }
                 const groups = {};
                 recs.forEach(rec => {
-                    const tid = rec.task_id || rec.folder_name;
+                    const tid = rec.task_name || rec.task_id || rec.folder_name;
                     const p = getBase(tid);
                     if (!groups[p.base]) groups[p.base] = [];
                     groups[p.base].push({ rec, ver: p.ver });
@@ -8029,7 +8046,7 @@ ANNOTATOR_DASHBOARD_TEMPLATE = '''
                     vers.sort((a, b) => b.ver - a.ver);
                     vers.forEach((v, vi) => {
                         const rec = v.rec;
-                        const tid = rec.task_id || rec.folder_name;
+                        const tid = rec.task_name || rec.task_id || rec.folder_name;
                         const status = rec.review_status || 'unreviewed';
                         const hasErr = rec.error_count > 0;
                         const cardUrl = '/annotator/' + encodeURIComponent(rec.folder_name) + '?folder=' + encodeURIComponent(folder) + '&direct=1';
@@ -8304,7 +8321,7 @@ def api_oss_verify_access():
         if cached:
             for ann_data in cached.get('annotators', {}).values():
                 for rec in ann_data.get('recordings', []):
-                    if rec.get('task_id', '') == task_id or rec.get('folder_name', '') == task_id:
+                    if rec.get('task_id', '') == task_id or rec.get('task_name', '') == task_id or rec.get('folder_name', '') == task_id:
                         matched_folder = rec['folder_name']
                         matched_username = rec.get('_username', '')
                         break
