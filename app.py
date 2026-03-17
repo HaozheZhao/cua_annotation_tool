@@ -15,11 +15,40 @@ import threading
 import logging
 from pathlib import Path
 from datetime import datetime
-from flask import Flask, render_template_string, send_from_directory, jsonify, request, Response, stream_with_context
+from flask import Flask, render_template_string, send_from_directory, jsonify, request, Response, stream_with_context, session, redirect, url_for
+from functools import wraps
 
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'cua-annotation-tool-secret-key-2026')
+app.permanent_session_lifetime = 86400  # 24 hours
+
+# Authentication config
+REVIEWER_ACCOUNTS = {
+    'admin': '1qazXSW@3edc',
+}
+
+
+def reviewer_login_required(f):
+    """Decorator to require reviewer login for dashboard routes."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('reviewer_logged_in'):
+            return redirect('/login?next=' + request.path)
+        return f(*args, **kwargs)
+    return decorated
+
+
+def annotator_login_required(f):
+    """Decorator to require annotator login."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('annotator_username'):
+            return redirect('/annotator_login')
+        return f(*args, **kwargs)
+    return decorated
+
 
 # Configuration - can be overridden via environment variables
 DATA_DIR = Path(os.environ.get('CUA_DATA_DIR', './data'))
@@ -110,8 +139,9 @@ VISUAL ANNOTATIONS ON SCREENSHOTS:
 
 MISSING JUSTIFICATION HANDLING:
 - If justification is marked as "(NOT PROVIDED - justification is missing)", set justification_quality to "missing".
-- You MUST write a complete justification in rewritten_justification (format: "[Specific reason] to [how it advances the task]").
+- You MUST write a complete, high-quality justification in English in rewritten_justification (format: "[Specific reason] to [how it advances the task]").
 - Focus on explaining what the operation does and why it is needed for the task.
+- The justification must be in English.
 
 =====================================
 OUTPUT FORMAT
@@ -685,7 +715,7 @@ Task Instructions: {instructions or 'Not provided'}
         user_text += """This step has NO justification provided by the annotator. You must:
 1. Evaluate the operation correctness as usual.
 2. Set justification_quality to "missing".
-3. WRITE a complete justification for this step in rewritten_justification (format: "[Specific reason] to [how it advances the task]").
+3. WRITE a complete, high-quality justification for this step in rewritten_justification. The justification MUST be in English. Format: "[Specific reason why this operation is performed] to [how it advances the overall task goal]". The justification should explain the PURPOSE and NECESSITY of this operation, not just describe what it does.
 4. Explain in correctness_reason what this operation does and whether it makes sense for the task.
 Output JSON only."""
 
@@ -3091,6 +3121,7 @@ DASHBOARD_TEMPLATE = '''
         <h1>OSS Recording Dashboard</h1>
         <div class="header-controls">
             <a href="/" class="nav-link">&#8592; Local Review</a>
+            <a href="/logout" class="nav-link" style="border-color:#f44336;color:#f44336;">Logout</a>
             <input type="text" id="ossFolder" value="recordings_0303" placeholder="OSS upload folder..." />
             <button class="btn-load" id="loadBtn" onclick="loadDashboard()">Load</button>
             <label class="auto-poll-label">
@@ -4778,15 +4809,17 @@ OSS_REVIEW_TEMPLATE = '''
 
         // Annotator mode: hide AI check, mode toggle, reset button; change header
         if (isAnnotatorMode) {
-            document.getElementById('aiCheckContainer').style.display = 'none';
+            // Annotators CAN use AI check (kept visible)
             document.querySelector('.mode-toggle').style.display = 'none';
             document.querySelector('.btn-reset').style.display = 'none';
             document.querySelector('.header h1').textContent = 'Annotator Review';
             document.querySelector('.header h1').style.color = '#ff9800';
             // Hide review decision panel for annotator
             document.querySelector('.panel-review').style.display = 'none';
-            // Change back link for annotator
-            document.getElementById('backLink').textContent = 'Back';
+            // Back link goes to annotator dashboard, NOT reviewer dashboard
+            const backLink = document.getElementById('backLink');
+            backLink.textContent = 'My Tasks';
+            backLink.href = '/annotator_dashboard?folder=' + encodeURIComponent(ossFolder);
         }
 
         // ========== Recording sidebar ==========
@@ -6776,10 +6809,155 @@ OSS_REVIEW_TEMPLATE = '''
 '''
 
 # ============================================================================
+# Authentication Routes
+# ============================================================================
+
+LOGIN_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Reviewer Login</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f0f1a; color: #e0e0e0; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .login-card { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border: 1px solid #333; border-radius: 12px; padding: 40px; max-width: 400px; width: 90%; box-shadow: 0 8px 30px rgba(0,0,0,0.4); }
+        .login-card h1 { color: #00d9ff; font-size: 1.4em; text-align: center; margin-bottom: 8px; }
+        .login-card .subtitle { color: #888; font-size: 0.85em; text-align: center; margin-bottom: 24px; }
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; color: #888; font-size: 0.82em; margin-bottom: 4px; font-weight: bold; }
+        .form-group input { width: 100%; padding: 10px 14px; border: 1px solid #444; border-radius: 6px; background: #0d1117; color: #e0e0e0; font-size: 0.95em; }
+        .form-group input:focus { border-color: #00d9ff; outline: none; }
+        .submit-btn { width: 100%; padding: 12px; background: linear-gradient(135deg, #00d9ff 0%, #0088cc 100%); border: none; border-radius: 6px; color: #000; font-weight: bold; font-size: 1em; cursor: pointer; margin-top: 8px; }
+        .submit-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(0,217,255,0.3); }
+        .error-msg { color: #f44336; text-align: center; margin-top: 12px; font-size: 0.85em; }
+        .annotator-link { text-align: center; margin-top: 20px; }
+        .annotator-link a { color: #ff9800; font-size: 0.85em; text-decoration: none; }
+        .annotator-link a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <h1>Reviewer Login</h1>
+        <div class="subtitle">Enter credentials to access the review dashboard</div>
+        <form method="POST">
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" name="username" placeholder="Username" required autofocus />
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" name="password" placeholder="Password" required />
+            </div>
+            <button type="submit" class="submit-btn">Login</button>
+            {% if error %}<div class="error-msg">{{ error }}</div>{% endif %}
+        </form>
+        <div class="annotator-link">
+            <a href="/annotator_login">Annotator? Login here</a>
+        </div>
+    </div>
+</body>
+</html>
+'''
+
+ANNOTATOR_LOGIN_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Annotator Login</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f0f1a; color: #e0e0e0; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .login-card { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border: 1px solid #333; border-radius: 12px; padding: 40px; max-width: 400px; width: 90%; box-shadow: 0 8px 30px rgba(0,0,0,0.4); }
+        .login-card h1 { color: #ff9800; font-size: 1.4em; text-align: center; margin-bottom: 8px; }
+        .login-card .subtitle { color: #888; font-size: 0.85em; text-align: center; margin-bottom: 24px; }
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; color: #888; font-size: 0.82em; margin-bottom: 4px; font-weight: bold; }
+        .form-group input { width: 100%; padding: 10px 14px; border: 1px solid #444; border-radius: 6px; background: #0d1117; color: #e0e0e0; font-size: 0.95em; }
+        .form-group input:focus { border-color: #ff9800; outline: none; }
+        .submit-btn { width: 100%; padding: 12px; background: linear-gradient(135deg, #ff9800 0%, #e68900 100%); border: none; border-radius: 6px; color: #000; font-weight: bold; font-size: 1em; cursor: pointer; margin-top: 8px; }
+        .submit-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(255,152,0,0.3); }
+        .error-msg { color: #f44336; text-align: center; margin-top: 12px; font-size: 0.85em; }
+        .reviewer-link { text-align: center; margin-top: 20px; }
+        .reviewer-link a { color: #00d9ff; font-size: 0.85em; text-decoration: none; }
+        .reviewer-link a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <h1>Annotator Login</h1>
+        <div class="subtitle">Enter your username to access your tasks</div>
+        <form method="POST">
+            <div class="form-group">
+                <label>OSS Folder</label>
+                <input type="text" name="folder" placeholder="e.g. recordings_0303" value="{{ folder }}" required />
+            </div>
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" name="username" placeholder="Your annotator username" value="{{ username }}" required />
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" name="password" placeholder="Password" required />
+            </div>
+            <button type="submit" class="submit-btn">Login</button>
+            {% if error %}<div class="error-msg">{{ error }}</div>{% endif %}
+        </form>
+        <div class="reviewer-link">
+            <a href="/login">Reviewer? Login here</a>
+        </div>
+    </div>
+</body>
+</html>
+'''
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = None
+    if request.method == 'POST':
+        username = request.form.get('username', '')
+        password = request.form.get('password', '')
+        if username in REVIEWER_ACCOUNTS and REVIEWER_ACCOUNTS[username] == password:
+            session.permanent = True
+            session['reviewer_logged_in'] = True
+            session['reviewer_username'] = username
+            next_url = request.args.get('next', '/dashboard')
+            return redirect(next_url)
+        error = 'Invalid username or password'
+    return render_template_string(LOGIN_TEMPLATE, error=error)
+
+
+@app.route('/annotator_login', methods=['GET', 'POST'])
+def annotator_login():
+    error = None
+    folder = request.form.get('folder', '') or request.args.get('folder', '')
+    username = request.form.get('username', '') or request.args.get('user', '')
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        if not folder or not username:
+            error = 'All fields required'
+        elif password.lower() != username.lower():
+            error = 'Invalid password'
+        else:
+            session.permanent = True
+            session['annotator_username'] = username
+            session['annotator_folder'] = folder
+            return redirect('/annotator_dashboard?folder=' + folder + '&user=' + username)
+    return render_template_string(ANNOTATOR_LOGIN_TEMPLATE, error=error, folder=folder, username=username)
+
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect('/login')
+
+
+# ============================================================================
 # OSS Routes
 # ============================================================================
 
 @app.route('/dashboard')
+@reviewer_login_required
 def dashboard():
     """Dashboard page for OSS recordings overview."""
     return render_template_string(DASHBOARD_TEMPLATE)
@@ -7811,6 +7989,7 @@ def api_oss_ai_check_status():
 
 
 @app.route('/oss_review/<path:folder_name>')
+@reviewer_login_required
 def oss_review_page(folder_name):
     """Review page for a single OSS recording."""
     return render_template_string(OSS_REVIEW_TEMPLATE, folder_name=folder_name, page_mode='reviewer')
@@ -7818,13 +7997,23 @@ def oss_review_page(folder_name):
 
 @app.route('/annotator/<path:folder_name>')
 def annotator_page(folder_name):
-    """Annotator page - shows reviewer error marks, allows corrections. No AI check access."""
+    """Annotator page - allows corrections with AI check. No review decision access."""
     return render_template_string(OSS_REVIEW_TEMPLATE, folder_name=folder_name, page_mode='annotator')
 
 
 @app.route('/annotator_dashboard')
 def annotator_dashboard():
     """Dashboard for annotators to see all their tasks and reviewer feedback."""
+    # Allow access if logged in as annotator or if URL has folder+user params
+    ann_user = session.get('annotator_username', '')
+    ann_folder = session.get('annotator_folder', '')
+    url_user = request.args.get('user', ann_user)
+    url_folder = request.args.get('folder', ann_folder)
+    if not ann_user and not url_user:
+        return redirect('/annotator_login')
+    # Auto-redirect with params if coming from session but URL is bare
+    if ann_user and not request.args.get('user') and not request.args.get('folder'):
+        return redirect(f'/annotator_dashboard?folder={ann_folder}&user={ann_user}')
     return render_template_string(ANNOTATOR_DASHBOARD_TEMPLATE)
 
 
@@ -7970,7 +8159,7 @@ ANNOTATOR_DASHBOARD_TEMPLATE = '''
             <input type="text" id="username" placeholder="Your username" />
             <button id="loadBtn" onclick="loadTasks()">Load My Tasks</button>
         </div>
-        <a class="back-link" href="/edit">Single Task Access</a>
+        <a class="back-link" href="/logout">Logout</a>
     </div>
     <div class="content">
         <div id="summaryBar" class="summary-bar" style="display:none;"></div>
@@ -8285,14 +8474,8 @@ DIRECT_ACCESS_TEMPLATE = '''
 
 @app.route('/edit')
 def direct_access_page():
-    """Landing page for direct case access by annotators."""
-    default_folder = request.args.get('folder', '')
-    task_id = request.args.get('task', '')
-    username = request.args.get('user', '')
-    return render_template_string(DIRECT_ACCESS_TEMPLATE,
-                                  default_folder=default_folder,
-                                  task_id=task_id,
-                                  username=username)
+    """Redirect to annotator login."""
+    return redirect('/annotator_login')
 
 
 @app.route('/api/oss/verify_access')
