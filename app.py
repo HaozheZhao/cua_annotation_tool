@@ -50,6 +50,28 @@ def annotator_login_required(f):
     return decorated
 
 
+def any_login_required(f):
+    """Decorator to require either reviewer or annotator login."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if session.get('reviewer_logged_in') or session.get('annotator_username'):
+            return f(*args, **kwargs)
+        if request.path.startswith('/api/') or request.path.startswith('/oss_frame/'):
+            return jsonify({'error': 'Authentication required'}), 401
+        return redirect('/login')
+    return decorated
+
+
+def reviewer_api_required(f):
+    """Decorator for API routes only reviewers can call."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('reviewer_logged_in'):
+            return jsonify({'error': 'Reviewer authentication required'}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+
 # Configuration - can be overridden via environment variables
 DATA_DIR = Path(os.environ.get('CUA_DATA_DIR', './data'))
 CSV_FILE = Path(os.environ.get('CUA_CSV_FILE', './task_assignments.csv'))
@@ -6963,6 +6985,7 @@ def dashboard():
     return render_template_string(DASHBOARD_TEMPLATE)
 
 @app.route('/api/oss/list')
+@reviewer_login_required
 def api_oss_list():
     """List recordings from an OSS folder."""
     folder = request.args.get('folder', 'recordings_0303')
@@ -7073,6 +7096,7 @@ def _fetch_dashboard_data(folder):
 
 
 @app.route('/api/oss/dashboard_data')
+@reviewer_login_required
 def api_oss_dashboard_data():
     """Aggregated per-annotator statistics for the dashboard. Uses server-side cache."""
     folder = request.args.get('folder', 'recordings_0303')
@@ -7103,6 +7127,7 @@ def api_oss_dashboard_data():
 
 
 @app.route('/api/oss/folder_recordings')
+@any_login_required
 def api_oss_folder_recordings():
     """Return flat list of all recordings in a folder with review status. For the review-page sidebar."""
     folder = request.args.get('folder', 'recordings_0303')
@@ -7130,6 +7155,7 @@ def api_oss_folder_recordings():
 
 
 @app.route('/api/oss/task/<path:folder_name>')
+@any_login_required
 def api_oss_task(folder_name):
     """Load recording data for review from OSS.
 
@@ -7244,6 +7270,7 @@ def api_oss_task(folder_name):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/oss_frame/<path:folder_name>/<float:video_time>')
+@any_login_required
 def oss_serve_frame(folder_name, video_time):
     """Extract and serve a frame from a cached OSS recording video."""
     import cv2
@@ -7287,6 +7314,7 @@ def oss_serve_frame(folder_name, video_time):
     return Response(buffer.tobytes(), mimetype='image/jpeg')
 
 @app.route('/api/oss/annotate', methods=['POST'])
+@any_login_required
 def api_oss_annotate():
     """Save full annotation for an OSS recording."""
     data = request.json
@@ -7338,6 +7366,7 @@ def api_oss_annotate():
     return jsonify({'success': True})
 
 @app.route('/api/oss/update_coordinate', methods=['POST'])
+@any_login_required
 def api_oss_update_coordinate():
     """Save coordinate adjustment for an OSS recording step."""
     data = request.json
@@ -7374,6 +7403,7 @@ def api_oss_update_coordinate():
     return jsonify({'success': True})
 
 @app.route('/api/oss/review', methods=['POST'])
+@reviewer_api_required
 def api_oss_review():
     """Save review status for a recording."""
     data = request.json
@@ -7404,6 +7434,7 @@ def api_oss_review():
     return jsonify({'success': True})
 
 @app.route('/api/oss/update_justification', methods=['POST'])
+@any_login_required
 def api_oss_update_justification():
     """Save edited justification for a step of an OSS recording.
     Stores in overlay only - never modifies cached OSS files."""
@@ -7427,6 +7458,7 @@ def api_oss_update_justification():
 
 
 @app.route('/api/oss/update_code', methods=['POST'])
+@any_login_required
 def api_oss_update_code():
     """Save edited code for a step of an OSS recording.
     Stores in overlay only - never modifies cached OSS files."""
@@ -7450,6 +7482,7 @@ def api_oss_update_code():
 
 
 @app.route('/api/oss/update_video_time', methods=['POST'])
+@any_login_required
 def api_oss_update_video_time():
     """Save adjusted video timestamp for a step's screenshot."""
     data = request.json
@@ -7472,6 +7505,7 @@ def api_oss_update_video_time():
 
 
 @app.route('/api/oss/update_query', methods=['POST'])
+@any_login_required
 def api_oss_update_query():
     """Save edited query for an OSS recording.
     Stores in overlay only - never modifies cached OSS files."""
@@ -7492,6 +7526,7 @@ def api_oss_update_query():
 
 
 @app.route('/api/oss/delete_step', methods=['POST'])
+@any_login_required
 def api_oss_delete_step():
     """Delete a step from an OSS recording.
     Stores the ORIGINAL step index in overlay - never modifies cached OSS files.
@@ -7518,6 +7553,7 @@ def api_oss_delete_step():
 
 
 @app.route('/api/oss/mark_step_error', methods=['POST'])
+@reviewer_api_required
 def api_oss_mark_step_error():
     """Toggle a step error mark for reviewer feedback to annotator."""
     data = request.json
@@ -7545,6 +7581,7 @@ def api_oss_mark_step_error():
 
 
 @app.route('/api/oss/reset_case', methods=['POST'])
+@reviewer_api_required
 def api_oss_reset_case():
     """Reset a case to its original OSS data by clearing all overlay modifications.
     Also deletes cached metadata files so they get re-downloaded fresh from OSS."""
@@ -7593,6 +7630,7 @@ def api_oss_reset_case():
 
 
 @app.route('/api/oss/export_case/<path:folder_name>')
+@any_login_required
 def api_oss_export_case(folder_name):
     """Export a single graded case as a downloadable zip with JSONL and images."""
     try:
@@ -7742,6 +7780,7 @@ def api_oss_export_case(folder_name):
 
 
 @app.route('/api/oss/export_all')
+@reviewer_login_required
 def api_oss_export_all():
     """Export all graded cases in a folder as a single zip. Streams progress."""
     import cv2
@@ -7890,6 +7929,7 @@ def api_oss_export_all():
 
 
 @app.route('/api/oss/export_progress')
+@reviewer_login_required
 def api_oss_export_progress():
     """Return count of graded recordings for progress estimation."""
     oss_folder = request.args.get('folder', 'recordings_0303')
@@ -7906,6 +7946,7 @@ def api_oss_export_progress():
 
 
 @app.route('/api/oss/ai_check', methods=['POST'])
+@any_login_required
 def api_oss_ai_check():
     """Start AI quality check for a recording. Runs in background thread."""
     data = request.json
@@ -7960,6 +8001,7 @@ def api_oss_ai_check():
 
 
 @app.route('/api/oss/ai_check_status')
+@any_login_required
 def api_oss_ai_check_status():
     """Get current status of AI check for a recording."""
     folder_name = request.args.get('folder_name', '')
@@ -7998,18 +8040,19 @@ def oss_review_page(folder_name):
 @app.route('/annotator/<path:folder_name>')
 def annotator_page(folder_name):
     """Annotator page - allows corrections with AI check. No review decision access."""
+    # Require either reviewer or annotator login
+    if not session.get('reviewer_logged_in') and not session.get('annotator_username'):
+        return redirect('/annotator_login')
     return render_template_string(OSS_REVIEW_TEMPLATE, folder_name=folder_name, page_mode='annotator')
 
 
 @app.route('/annotator_dashboard')
 def annotator_dashboard():
     """Dashboard for annotators to see all their tasks and reviewer feedback."""
-    # Allow access if logged in as annotator or if URL has folder+user params
+    # Require annotator or reviewer session
     ann_user = session.get('annotator_username', '')
     ann_folder = session.get('annotator_folder', '')
-    url_user = request.args.get('user', ann_user)
-    url_folder = request.args.get('folder', ann_folder)
-    if not ann_user and not url_user:
+    if not ann_user and not session.get('reviewer_logged_in'):
         return redirect('/annotator_login')
     # Auto-redirect with params if coming from session but URL is bare
     if ann_user and not request.args.get('user') and not request.args.get('folder'):
@@ -8018,6 +8061,7 @@ def annotator_dashboard():
 
 
 @app.route('/api/oss/annotator_tasks')
+@any_login_required
 def api_oss_annotator_tasks():
     """List all tasks for a specific annotator with error/correction status."""
     folder = request.args.get('folder', '')
