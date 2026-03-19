@@ -7220,8 +7220,11 @@ def api_oss_task(folder_name):
         # Step 3: Download metadata files (skips if already cached)
         oss_client.download_recording_metadata_files(prefix, str(local_dir))
 
-        # Download video (lazy - skip if already cached)
-        oss_client.download_video(prefix, str(local_dir))
+        # Download video only if this is a video-format recording
+        # (has reduced_events_complete.jsonl). Screenshot-format recordings
+        # have no full video — skip the slow OSS scan.
+        if (local_dir / 'reduced_events_complete.jsonl').exists():
+            oss_client.download_video(prefix, str(local_dir))
 
         # Load ORIGINAL task data from cached files
         data = load_oss_task_data(local_dir)
