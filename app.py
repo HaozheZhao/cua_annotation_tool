@@ -948,41 +948,55 @@ def load_oss_task_data(local_dir):
         video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
         cap.release()
 
-    # Load events
+    # Load events - two formats:
+    # Format 1 (old): reduced_events_complete.jsonl + vis.jsonl + full video
+    # Format 2 (new): reduced_events_vis.jsonl only + screenshots/ + video_clips/
     complete_file = local_dir / 'reduced_events_complete.jsonl'
-    if not complete_file.exists():
-        return None
-
     vis_file = local_dir / 'reduced_events_vis.jsonl'
+
     vis_events = []
     if vis_file.exists():
         with open(vis_file) as f:
             vis_events = [json.loads(line) for line in f if line.strip()]
 
     complete_events = []
-    with open(complete_file) as f:
-        complete_events = [json.loads(line) for line in f if line.strip()]
+    if complete_file.exists():
+        with open(complete_file) as f:
+            complete_events = [json.loads(line) for line in f if line.strip()]
+
+    has_complete = len(complete_events) > 0
+    if not has_complete and not vis_events:
+        return None
+
+    primary_events = complete_events if has_complete else vis_events
+
+    # Get dimensions from metadata if no video
+    if not video_path:
+        video_width = metadata.get('screen_width', 1920) or 1920
+        video_height = metadata.get('screen_height', 1080) or 1080
 
     steps = []
-    for i, ce in enumerate(complete_events):
+    for i, ce in enumerate(primary_events):
         ve = vis_events[i] if i < len(vis_events) else {}
         coord = ce.get('coordinate', {})
         x, y = coord.get('x', 0), coord.get('y', 0)
 
-        start_time = ce.get('start_time', 0)
-        pre_move = ce.get('pre_move', {})
-
-        if pre_move and pre_move.get('start_time') and pre_move.get('end_time'):
-            pm_start = pre_move['start_time']
-            pm_end = pre_move['end_time']
-            pm_duration = pm_end - pm_start
-            capture_time = pm_start + (pm_duration * 0.8)
-        elif pre_move and pre_move.get('end_time'):
-            capture_time = max(0, pre_move['end_time'] - 0.3)
+        if has_complete:
+            start_time = ce.get('start_time', 0)
+            pre_move = ce.get('pre_move', {})
+            if pre_move and pre_move.get('start_time') and pre_move.get('end_time'):
+                pm_start = pre_move['start_time']
+                pm_end = pre_move['end_time']
+                pm_duration = pm_end - pm_start
+                capture_time = pm_start + (pm_duration * 0.8)
+            elif pre_move and pre_move.get('end_time'):
+                capture_time = max(0, pre_move['end_time'] - 0.3)
+            else:
+                capture_time = max(0, start_time - 0.1)
+            video_time = capture_time - video_start_ts
         else:
-            capture_time = max(0, start_time - 0.1)
-
-        video_time = capture_time - video_start_ts
+            # New format: use event ID for screenshot lookup
+            video_time = float(ce.get('id', i))
 
         action = ce.get('action', '')
         description = ve.get('description', ce.get('description', ''))
@@ -1076,6 +1090,7 @@ def load_oss_task_data(local_dir):
         'annotator_info': annotator_info,
         'task_name': task_name,
         'knowledge_points': knowledge_points,
+        'screenshot_mode': 'screenshots' if not has_complete else 'video',
     }
 
 HTML_TEMPLATE = '''
@@ -4811,6 +4826,7 @@ OSS_REVIEW_TEMPLATE = '''
         let annotation = {};
         let coordAdjustments = {};
         let stepErrors = {};  // {origIdx: {note: '...'}} - reviewer-marked errors
+        let annotatorStatus = 'not_started';
         let finetuneActive = false;
         let allRecordings = [];
         let filteredRecordings = [];
@@ -5026,6 +5042,7 @@ OSS_REVIEW_TEMPLATE = '''
             annotation = {};
             coordAdjustments = {};
             stepErrors = {};
+            annotatorStatus = 'not_started';
             // Reset AI check state
             if (aiCheckPolling) { clearInterval(aiCheckPolling); aiCheckPolling = null; }
             aiCheckResults = null;
@@ -5068,6 +5085,7 @@ OSS_REVIEW_TEMPLATE = '''
                 annotation = taskData.annotation || {};
                 coordAdjustments = taskData.coord_adjustments || {};
                 stepErrors = taskData.step_errors || {};
+                annotatorStatus = taskData.annotator_status || 'not_started';
                 // Load AI check results if available
                 if (annotation.ai_check_results && annotation.ai_check_results.status === 'completed') {
                     aiCheckResults = annotation.ai_check_results;
@@ -5094,6 +5112,16 @@ OSS_REVIEW_TEMPLATE = '''
                     '<textarea class="query-edit-input" id="query-edit" onchange="saveQuery(this.value)" placeholder="Enter query...">' +
                     (info.query || '') + '</textarea></div>';
                 infoHtml += '<div class="info-item"><button class="export-case-btn" onclick="exportCase()">Export Case</button></div>';
+                // Annotator status
+                if (isAnnotatorMode) {
+                    infoHtml += '<div class="info-item" style="display:flex;gap:6px;align-items:center;"><span style="color:#888;font-size:0.8em;">Status:</span>';
+                    infoHtml += '<button id="annBtnIP" style="padding:3px 10px;border:1px solid #ff9800;border-radius:4px;background:' + (annotatorStatus==='in_progress'?'#ff9800':'transparent') + ';color:' + (annotatorStatus==='in_progress'?'#000':'#ff9800') + ';cursor:pointer;font-size:0.78em;font-weight:bold;" onclick="setAnnotatorStatus(\'in_progress\')">In Progress</button>';
+                    infoHtml += '<button id="annBtnDone" style="padding:3px 10px;border:1px solid #4caf50;border-radius:4px;background:' + (annotatorStatus==='completed'?'#4caf50':'transparent') + ';color:' + (annotatorStatus==='completed'?'#fff':'#4caf50') + ';cursor:pointer;font-size:0.78em;font-weight:bold;" onclick="setAnnotatorStatus(\'completed\')">Completed</button></div>';
+                } else {
+                    var _asc = {not_started:'#888',in_progress:'#ff9800',completed:'#4caf50'};
+                    var _asl = {not_started:'Not Started',in_progress:'In Progress',completed:'Completed'};
+                    infoHtml += '<div class="info-item"><span style="color:#888;font-size:0.8em;">Annotator:</span> <b style="color:' + (_asc[annotatorStatus]||'#888') + ';font-size:0.85em;">' + (_asl[annotatorStatus]||'Not Started') + '</b></div>';
+                }
                 // Show error count for annotator
                 const errorCount = Object.keys(stepErrors).length;
                 if (isAnnotatorMode && errorCount > 0) {
@@ -6159,6 +6187,15 @@ OSS_REVIEW_TEMPLATE = '''
                     })
                 });
             } catch (err) { console.error('Save error note failed:', err); }
+        }
+
+        async function setAnnotatorStatus(s) {
+            if (annotatorStatus === s) s = 'not_started';
+            annotatorStatus = s;
+            var b1 = document.getElementById('annBtnIP'), b2 = document.getElementById('annBtnDone');
+            if (b1) { b1.style.background = s==='in_progress'?'#ff9800':'transparent'; b1.style.color = s==='in_progress'?'#000':'#ff9800'; }
+            if (b2) { b2.style.background = s==='completed'?'#4caf50':'transparent'; b2.style.color = s==='completed'?'#fff':'#4caf50'; }
+            try { await fetch('/api/oss/set_annotator_status', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({folder_name:folderName,oss_folder:ossFolder,status:s}) }); } catch(e) {}
         }
 
         function updateStepErrorUI(stepIdx) {
@@ -7263,6 +7300,7 @@ def api_oss_task(folder_name):
 
         # === Include step errors (reviewer marks) ===
         data['step_errors'] = ann.get('step_errors', {})
+        data['annotator_status'] = ann.get('annotator_status', 'not_started')
 
         return jsonify(data)
 
@@ -7272,10 +7310,39 @@ def api_oss_task(folder_name):
 @app.route('/oss_frame/<path:folder_name>/<float:video_time>')
 @any_login_required
 def oss_serve_frame(folder_name, video_time):
-    """Extract and serve a frame from a cached OSS recording video."""
-    import cv2
-
+    """Serve a frame — from screenshot file or by extracting from video."""
     local_dir = OSS_CACHE_DIR / folder_name
+    oss_folder = request.args.get('folder', 'recordings_0303')
+
+    # Try screenshot file first (new format: video_time encodes event ID)
+    step_idx = int(video_time)
+    screenshots_dir = local_dir / 'screenshots'
+    for ext in ('.jpg', '.png'):
+        ss_file = screenshots_dir / f'step_{step_idx}{ext}'
+        if ss_file.exists():
+            return Response(ss_file.read_bytes(), mimetype='image/jpeg')
+
+    # Try downloading screenshot from OSS
+    try:
+        import oss_client
+        bucket = oss_client._get_bucket()
+        prefix = oss_folder.rstrip('/') + '/' + folder_name
+        for ext in ('.jpg', '.png'):
+            try:
+                result = bucket.get_object(f"{prefix}/screenshots/step_{step_idx}{ext}")
+                screenshots_dir.mkdir(parents=True, exist_ok=True)
+                local_path = screenshots_dir / f'step_{step_idx}{ext}'
+                with open(local_path, 'wb') as f:
+                    for chunk in result:
+                        f.write(chunk)
+                return Response(local_path.read_bytes(), mimetype='image/jpeg')
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # Fall back to video frame extraction (old format)
+    import cv2
     video_file = None
     for f in local_dir.glob('*.mp4'):
         if 'video_clips' not in str(f):
@@ -7283,8 +7350,6 @@ def oss_serve_frame(folder_name, video_time):
             break
 
     if not video_file:
-        # Try to download the video first
-        oss_folder = request.args.get('folder', 'recordings_0303')
         try:
             import oss_client
             prefix = oss_folder.rstrip('/') + '/' + folder_name
@@ -7295,7 +7360,7 @@ def oss_serve_frame(folder_name, video_time):
             pass
 
     if not video_file or not video_file.exists():
-        return 'Video not found', 404
+        return 'Video/screenshot not found', 404
 
     cap = cv2.VideoCapture(str(video_file))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
@@ -7578,6 +7643,26 @@ def api_oss_mark_step_error():
 
     _sync_overlay_to_oss(oss_folder, folder_name)
     return jsonify({'success': True, 'error_count': len(step_errors)})
+
+
+@app.route('/api/oss/set_annotator_status', methods=['POST'])
+@any_login_required
+def api_oss_set_annotator_status():
+    """Set annotation status for a recording (not_started/in_progress/completed)."""
+    data = request.json
+    folder_name = data.get('folder_name', '')
+    oss_folder = data.get('oss_folder', 'recordings_0303')
+    status = data.get('status', 'not_started')
+    if status not in ('not_started', 'in_progress', 'completed'):
+        return jsonify({'error': 'Invalid status'}), 400
+    ann_key = f"{oss_folder}/{folder_name}"
+    oss_annotations = load_oss_annotations()
+    existing = oss_annotations.get(ann_key, {})
+    existing['annotator_status'] = status
+    oss_annotations[ann_key] = existing
+    save_oss_annotations(oss_annotations)
+    _sync_overlay_to_oss(oss_folder, folder_name)
+    return jsonify({'success': True, 'status': status})
 
 
 @app.route('/api/oss/reset_case', methods=['POST'])
@@ -8608,4 +8693,4 @@ if __name__ == '__main__':
     print(f"Direct access: http://{args.host}:{args.port}/edit")
     print("Press Ctrl+C to stop\n")
 
-    app.run(host=args.host, port=args.port, debug=False)
+    app.run(host=args.host, port=args.port, debug=False, threaded=True)
