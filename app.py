@@ -35,7 +35,8 @@ def reviewer_login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get('reviewer_logged_in'):
-            return redirect('/login?next=' + request.full_path)
+            from urllib.parse import quote
+            return redirect('/login?next=' + quote(request.full_path, safe=''))
         return f(*args, **kwargs)
     return decorated
 
@@ -5115,8 +5116,8 @@ OSS_REVIEW_TEMPLATE = '''
                 // Annotator status
                 if (isAnnotatorMode) {
                     infoHtml += '<div class="info-item" style="display:flex;gap:6px;align-items:center;"><span style="color:#888;font-size:0.8em;">Status:</span>';
-                    infoHtml += '<button id="annBtnIP" style="padding:3px 10px;border:1px solid #ff9800;border-radius:4px;background:' + (annotatorStatus==='in_progress'?'#ff9800':'transparent') + ';color:' + (annotatorStatus==='in_progress'?'#000':'#ff9800') + ';cursor:pointer;font-size:0.78em;font-weight:bold;" onclick="setAnnotatorStatus(\'in_progress\')">In Progress</button>';
-                    infoHtml += '<button id="annBtnDone" style="padding:3px 10px;border:1px solid #4caf50;border-radius:4px;background:' + (annotatorStatus==='completed'?'#4caf50':'transparent') + ';color:' + (annotatorStatus==='completed'?'#fff':'#4caf50') + ';cursor:pointer;font-size:0.78em;font-weight:bold;" onclick="setAnnotatorStatus(\'completed\')">Completed</button></div>';
+                    infoHtml += '<button id="annBtnIP" style="padding:3px 10px;border:1px solid #ff9800;border-radius:4px;background:' + (annotatorStatus==='in_progress'?'#ff9800':'transparent') + ';color:' + (annotatorStatus==='in_progress'?'#000':'#ff9800') + ';cursor:pointer;font-size:0.78em;font-weight:bold;" onclick="setAnnotatorStatus(&quot;in_progress&quot;)">In Progress</button>';
+                    infoHtml += '<button id="annBtnDone" style="padding:3px 10px;border:1px solid #4caf50;border-radius:4px;background:' + (annotatorStatus==='completed'?'#4caf50':'transparent') + ';color:' + (annotatorStatus==='completed'?'#fff':'#4caf50') + ';cursor:pointer;font-size:0.78em;font-weight:bold;" onclick="setAnnotatorStatus(&quot;completed&quot;)">Completed</button></div>';
                 } else {
                     var _asc = {not_started:'#888',in_progress:'#ff9800',completed:'#4caf50'};
                     var _asl = {not_started:'Not Started',in_progress:'In Progress',completed:'Completed'};
