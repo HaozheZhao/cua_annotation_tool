@@ -5345,8 +5345,17 @@ OSS_REVIEW_TEMPLATE = '''
                     html += '<div class="coord-adjust-panel" id="stacked-finetune-' + idx + '">';
                     html += '<h5>Coordinate Fine-tuning</h5>';
                     html += '<div class="coord-adjust-controls">';
+                    if (step.action === 'drag' && step.drag_to) {
+                        html += '<div style="margin-bottom:4px;color:#888;font-size:0.78em;">Start (From):</div>';
+                    }
                     html += '<div class="coord-field"><label>X:</label><input type="number" class="coord-input" id="stacked-cx-' + idx + '" value="' + step.coordinate.x + '" min="0" max="' + videoWidth + '" oninput="updateStackedMarker(' + idx + ')"></div>';
                     html += '<div class="coord-field"><label>Y:</label><input type="number" class="coord-input" id="stacked-cy-' + idx + '" value="' + step.coordinate.y + '" min="0" max="' + videoHeight + '" oninput="updateStackedMarker(' + idx + ')"></div>';
+                    if (step.action === 'drag' && step.drag_to) {
+                        html += '</div><div class="coord-adjust-controls" style="margin-top:4px;">';
+                        html += '<div style="margin-bottom:4px;color:#888;font-size:0.78em;">End (To):</div>';
+                        html += '<div class="coord-field"><label>X2:</label><input type="number" class="coord-input" id="stacked-dx-' + idx + '" value="' + step.drag_to.x + '" min="0" max="' + videoWidth + '" oninput="updateStackedMarker(' + idx + ')"></div>';
+                        html += '<div class="coord-field"><label>Y2:</label><input type="number" class="coord-input" id="stacked-dy-' + idx + '" value="' + step.drag_to.y + '" min="0" max="' + videoHeight + '" oninput="updateStackedMarker(' + idx + ')"></div>';
+                    }
                     html += '<button class="finetune-btn save" onclick="event.stopPropagation();saveStackedCoordinate(' + idx + ')">Save</button>';
                     html += '<button class="finetune-btn cancel" onclick="event.stopPropagation();cancelStackedFinetune(' + idx + ')">Cancel</button>';
                     html += '<span style="color:#888;font-size:0.75em;margin-left:8px;">Click image to set</span>';
@@ -5597,18 +5606,43 @@ OSS_REVIEW_TEMPLATE = '''
             if (adj && adj.original) { origX = adj.original.x; origY = adj.original.y; }
             else { origX = step.coordinate.x; origY = step.coordinate.y; }
 
+            // Handle drag-end coordinates
+            let dragToX = null, dragToY = null, origDragToX = null, origDragToY = null;
+            if (step.action === 'drag' && step.drag_to) {
+                const dxInput = document.getElementById('stacked-dx-' + idx);
+                const dyInput = document.getElementById('stacked-dy-' + idx);
+                if (dxInput && dyInput) {
+                    dragToX = parseInt(dxInput.value) || 0;
+                    dragToY = parseInt(dyInput.value) || 0;
+                    if (adj && adj.original_drag_to) { origDragToX = adj.original_drag_to.x; origDragToY = adj.original_drag_to.y; }
+                    else { origDragToX = step.drag_to.x; origDragToY = step.drag_to.y; }
+                }
+            }
+
+            var body = { folder_name: folderName, oss_folder: ossFolder, step_index: origIdx, x: x, y: y, original_x: origX, original_y: origY };
+            if (dragToX !== null) {
+                body.drag_to_x = dragToX;
+                body.drag_to_y = dragToY;
+                body.original_drag_to_x = origDragToX;
+                body.original_drag_to_y = origDragToY;
+            }
+
             await fetch('/api/oss/update_coordinate', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    folder_name: folderName, oss_folder: ossFolder,
-                    step_index: origIdx, x: x, y: y,
-                    original_x: origX, original_y: origY
-                })
+                body: JSON.stringify(body)
             });
-            coordAdjustments[String(origIdx)] = { x: x, y: y, original: { x: origX, y: origY } };
+            var adjData = { x: x, y: y, original: { x: origX, y: origY } };
+            if (dragToX !== null) {
+                adjData.drag_to = { x: dragToX, y: dragToY };
+                adjData.original_drag_to = { x: origDragToX, y: origDragToY };
+            }
+            coordAdjustments[String(origIdx)] = adjData;
             step.coordinate = { x: x, y: y };
-            if (step.action === 'click') {
+            if (step.action === 'drag' && dragToX !== null) {
+                step.drag_to = { x: dragToX, y: dragToY };
+                step.code = 'pyautogui.moveTo(' + x + ', ' + y + '); pyautogui.dragTo(' + dragToX + ', ' + dragToY + ')';
+            } else if (step.action === 'click') {
                 if (step.code.includes('doubleClick')) step.code = 'pyautogui.doubleClick(' + x + ', ' + y + ')';
                 else if (step.code.includes('rightClick')) step.code = 'pyautogui.rightClick(' + x + ', ' + y + ')';
                 else if (step.code.includes('clicks=3')) step.code = 'pyautogui.click(' + x + ', ' + y + ', clicks=3)';
@@ -5880,8 +5914,17 @@ OSS_REVIEW_TEMPLATE = '''
                 html += '<div class="coord-adjust-panel" id="detail-finetune-panel">';
                 html += '<h5>Coordinate Fine-tuning</h5>';
                 html += '<div class="coord-adjust-controls">';
+                if (step.action === 'drag' && step.drag_to) {
+                    html += '<div style="margin-bottom:4px;color:#888;font-size:0.78em;">Start (From):</div>';
+                }
                 html += '<div class="coord-field"><label>X:</label><input type="number" class="coord-input" id="detail-cx" value="' + step.coordinate.x + '" min="0" max="' + videoWidth + '" oninput="updateDetailMarker(' + idx + ')"></div>';
                 html += '<div class="coord-field"><label>Y:</label><input type="number" class="coord-input" id="detail-cy" value="' + step.coordinate.y + '" min="0" max="' + videoHeight + '" oninput="updateDetailMarker(' + idx + ')"></div>';
+                if (step.action === 'drag' && step.drag_to) {
+                    html += '</div><div class="coord-adjust-controls" style="margin-top:4px;">';
+                    html += '<div style="margin-bottom:4px;color:#888;font-size:0.78em;">End (To):</div>';
+                    html += '<div class="coord-field"><label>X2:</label><input type="number" class="coord-input" id="detail-dx" value="' + step.drag_to.x + '" min="0" max="' + videoWidth + '" oninput="updateDetailMarker(' + idx + ')"></div>';
+                    html += '<div class="coord-field"><label>Y2:</label><input type="number" class="coord-input" id="detail-dy" value="' + step.drag_to.y + '" min="0" max="' + videoHeight + '" oninput="updateDetailMarker(' + idx + ')"></div>';
+                }
                 html += '<button class="finetune-btn save" onclick="saveDetailCoordinate(' + idx + ')">Save</button>';
                 html += '<button class="finetune-btn cancel" onclick="cancelDetailFinetune(' + idx + ')">Cancel</button>';
                 html += '<span style="color:#888;font-size:0.75em;margin-left:8px;">Click image to set</span>';
@@ -6005,18 +6048,34 @@ OSS_REVIEW_TEMPLATE = '''
             if (adj && adj.original) { origX = adj.original.x; origY = adj.original.y; }
             else { origX = step.coordinate.x; origY = step.coordinate.y; }
 
+            let dragToX = null, dragToY = null, origDragToX = null, origDragToY = null;
+            if (step.action === 'drag' && step.drag_to) {
+                const dxI = document.getElementById('detail-dx');
+                const dyI = document.getElementById('detail-dy');
+                if (dxI && dyI) {
+                    dragToX = parseInt(dxI.value) || 0;
+                    dragToY = parseInt(dyI.value) || 0;
+                    if (adj && adj.original_drag_to) { origDragToX = adj.original_drag_to.x; origDragToY = adj.original_drag_to.y; }
+                    else { origDragToX = step.drag_to.x; origDragToY = step.drag_to.y; }
+                }
+            }
+
+            var body = { folder_name: folderName, oss_folder: ossFolder, step_index: origIdx, x: x, y: y, original_x: origX, original_y: origY };
+            if (dragToX !== null) { body.drag_to_x = dragToX; body.drag_to_y = dragToY; body.original_drag_to_x = origDragToX; body.original_drag_to_y = origDragToY; }
+
             await fetch('/api/oss/update_coordinate', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    folder_name: folderName, oss_folder: ossFolder,
-                    step_index: origIdx, x: x, y: y,
-                    original_x: origX, original_y: origY
-                })
+                body: JSON.stringify(body)
             });
-            coordAdjustments[String(origIdx)] = { x: x, y: y, original: { x: origX, y: origY } };
+            var adjData = { x: x, y: y, original: { x: origX, y: origY } };
+            if (dragToX !== null) { adjData.drag_to = { x: dragToX, y: dragToY }; adjData.original_drag_to = { x: origDragToX, y: origDragToY }; }
+            coordAdjustments[String(origIdx)] = adjData;
             step.coordinate = { x: x, y: y };
-            if (step.action === 'click') {
+            if (step.action === 'drag' && dragToX !== null) {
+                step.drag_to = { x: dragToX, y: dragToY };
+                step.code = 'pyautogui.moveTo(' + x + ', ' + y + '); pyautogui.dragTo(' + dragToX + ', ' + dragToY + ')';
+            } else if (step.action === 'click') {
                 if (step.code.includes('doubleClick')) step.code = 'pyautogui.doubleClick(' + x + ', ' + y + ')';
                 else if (step.code.includes('rightClick')) step.code = 'pyautogui.rightClick(' + x + ', ' + y + ')';
                 else if (step.code.includes('clicks=3')) step.code = 'pyautogui.click(' + x + ', ' + y + ', clicks=3)';
@@ -7319,9 +7378,18 @@ def api_oss_task(folder_name):
                 elif 'click' in code.lower() and 'pyautogui.click' in code:
                     step['code'] = f"pyautogui.click({x}, {y})"
                 elif 'moveTo' in code and 'dragTo' in code:
-                    match = re.search(r'dragTo\((\d+),\s*(\d+)\)', code)
-                    if match:
-                        step['code'] = f"pyautogui.moveTo({x}, {y}); pyautogui.dragTo({match.group(1)}, {match.group(2)})"
+                    drag_adj = adj.get('drag_to', {})
+                    if drag_adj:
+                        step['code'] = f"pyautogui.moveTo({x}, {y}); pyautogui.dragTo({drag_adj['x']}, {drag_adj['y']})"
+                        step['drag_to'] = {'x': drag_adj['x'], 'y': drag_adj['y']}
+                    else:
+                        match = re.search(r'dragTo\((\d+),\s*(\d+)\)', code)
+                        if match:
+                            step['code'] = f"pyautogui.moveTo({x}, {y}); pyautogui.dragTo({match.group(1)}, {match.group(2)})"
+                # Also store drag_to adjustment for frontend display
+                if 'drag_to' in adj:
+                    data['coord_adjustments'][str(step['original_index'])]['drag_to'] = adj['drag_to']
+                    data['coord_adjustments'][str(step['original_index'])]['original_drag_to'] = adj.get('original_drag_to', {})
 
         # === Apply overlay: code_edits AFTER coord adjustments (manual edits take priority) ===
         for step in data.get('steps', []):
@@ -7495,7 +7563,7 @@ def api_oss_update_coordinate():
     else:
         original = {'x': original_x, 'y': original_y}
 
-    coord_adjustments[adj_key] = {
+    adj_data = {
         'folder_name': folder_name,
         'oss_folder': oss_folder,
         'step_index': step_index,
@@ -7503,6 +7571,15 @@ def api_oss_update_coordinate():
         'y': new_y,
         'original': original,
     }
+    # Handle drag-end coordinates
+    if data.get('drag_to_x') is not None:
+        adj_data['drag_to'] = {'x': data['drag_to_x'], 'y': data['drag_to_y']}
+        if adj_key in coord_adjustments and 'original_drag_to' in coord_adjustments[adj_key]:
+            adj_data['original_drag_to'] = coord_adjustments[adj_key]['original_drag_to']
+        else:
+            adj_data['original_drag_to'] = {'x': data.get('original_drag_to_x'), 'y': data.get('original_drag_to_y')}
+
+    coord_adjustments[adj_key] = adj_data
     save_oss_coord_adjustments(coord_adjustments)
 
     _sync_overlay_to_oss(oss_folder, folder_name)
