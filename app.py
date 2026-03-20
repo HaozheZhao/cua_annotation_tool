@@ -35,7 +35,7 @@ def reviewer_login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get('reviewer_logged_in'):
-            return redirect('/login?next=' + request.path)
+            return redirect('/login?next=' + request.full_path)
         return f(*args, **kwargs)
     return decorated
 
