@@ -161,16 +161,18 @@ VISUAL ANNOTATIONS ON SCREENSHOTS:
 - Use these visual annotations to verify the operation target and position.
 
 MISSING JUSTIFICATION HANDLING:
-- If justification is marked as "(NOT PROVIDED - justification is missing)", set justification_quality to "missing".
+- If justification is marked as "(NOT PROVIDED - justification is missing)", this is NORMAL — annotators fill in justifications during web review, not during recording. Set justification_quality to "missing".
 - You MUST write a complete, high-quality justification in English in rewritten_justification (format: "[Specific reason] to [how it advances the task]").
 - Focus on explaining what the operation does and why it is needed for the task.
-- The justification must be in English.
+- Missing justification is NOT an error — it just means the annotator hasn't filled it in yet.
 
 =====================================
 OUTPUT FORMAT
 =====================================
+IMPORTANT: The fields correctness_reason, reasoning, and justification_issues MUST be written in Chinese (简体中文). The rewritten_justification should be in English. The operation_summary_update should be in English.
+
 Output ONLY a valid JSON object — no markdown fences, no text before/after:
-{"correctness":"correct|wrong|redundant|suspicious","correctness_reason":"1-2 sentence explanation of why this step is correct/wrong/redundant/suspicious","reasoning":"2-4 sentences explaining your analysis: what you see in the screenshot, what the operation does, whether it matches the task goal, and why you gave this verdict","justification_quality":"good|acceptable|poor|missing","justification_issues":["specific issue 1"],"rewritten_justification":"Improved justification following the [reason] to [necessity] format, or null if quality is good/acceptable","flags":[],"operation_summary_update":"Cumulative 2-4 sentence summary of ALL operations from step 1 through this step, for context in checking the next step"}
+{"correctness":"correct|wrong|redundant|suspicious","correctness_reason":"用1-2句中文解释为什么这一步是正确/错误/冗余/可疑的","reasoning":"用2-4句中文分析：截图中看到什么，操作做了什么，是否符合任务目标，以及为什么给出这个判定","justification_quality":"good|acceptable|poor|missing","justification_issues":["用中文描述具体问题"],"rewritten_justification":"Improved justification in English following the [reason] to [necessity] format, or null if quality is good/acceptable","flags":[],"operation_summary_update":"Cumulative 2-4 sentence summary in English of ALL operations from step 1 through this step, for context in checking the next step"}
 
 Possible flags (use when applicable): redundant_click, meaningless_scroll, shaky_click, back_and_forth, wrong_target, unnecessary_step, missing_justification, vague_justification"""
 
@@ -733,13 +735,13 @@ Task Instructions: {instructions or 'Not provided'}
 
 """
     if has_justification:
-        user_text += "Evaluate this step's operation correctness and justification quality. Output JSON only."
+        user_text += "Evaluate this step's operation correctness and justification quality. Remember: correctness_reason and reasoning must be in Chinese (简体中文). Output JSON only."
     else:
-        user_text += """This step has NO justification provided by the annotator. You must:
+        user_text += """This step has NO justification yet (this is normal — annotators fill it in during web review).
 1. Evaluate the operation correctness as usual.
 2. Set justification_quality to "missing".
-3. WRITE a complete, high-quality justification for this step in rewritten_justification. The justification MUST be in English. Format: "[Specific reason why this operation is performed] to [how it advances the overall task goal]". The justification should explain the PURPOSE and NECESSITY of this operation, not just describe what it does.
-4. Explain in correctness_reason what this operation does and whether it makes sense for the task.
+3. WRITE a complete, high-quality justification in English in rewritten_justification. Format: "[Specific reason] to [how it advances the task goal]".
+4. Explain in correctness_reason (in Chinese 简体中文) what this operation does and whether it makes sense.
 Output JSON only."""
 
     content = [{"type": "text", "text": user_text}]
@@ -4841,7 +4843,7 @@ OSS_REVIEW_TEMPLATE = '''
                     <div class="review-buttons">
                         <button class="review-btn reviewed" id="btnReviewed" onclick="setReview('reviewed')">Reviewed (Pass)</button>
                         <button class="review-btn rejected" id="btnRejected" onclick="setReview('rejected')">Rejected</button>
-                        <button class="review-btn unreviewed" id="btnUnreviewed" onclick="setReview('unreviewed')">Clear</button>
+                        <button class="review-btn unreviewed" id="btnUnreviewed" onclick="setReview('unreviewed')">Reset to Unreviewed</button>
                     </div>
                 </div>
             </div>
@@ -5210,6 +5212,10 @@ OSS_REVIEW_TEMPLATE = '''
                 const errorCount = Object.keys(stepErrors).length;
                 if (isAnnotatorMode && errorCount > 0) {
                     infoHtml += '<div class="info-item" style="color:#f44336;font-weight:bold;">&#9888; ' + errorCount + ' step(s) marked as errors by reviewer</div>';
+                }
+                // Deleted steps restore
+                if (taskData.deleted_step_count > 0) {
+                    infoHtml += '<div class="info-item" style="color:#ff9800;font-size:0.85em;">' + taskData.deleted_step_count + ' deleted step(s) <button style="padding:2px 8px;border:1px solid #ff9800;border-radius:3px;background:transparent;color:#ff9800;cursor:pointer;font-size:0.8em;" onclick="restoreDeletedSteps()">Restore All</button></div>';
                 }
                 document.getElementById('annotatorInfo').innerHTML = infoHtml || '<div class="info-item"><span>No annotator info</span></div>';
 
@@ -6147,6 +6153,11 @@ OSS_REVIEW_TEMPLATE = '''
             const ann = annotation || {};
             const scores = ann.scores || {};
 
+            // Annotators only see knowledge panel, not verdict/evaluation
+            if (isAnnotatorMode) {
+                document.getElementById('verdictPanel').innerHTML = '';
+                document.getElementById('evaluationPanel').innerHTML = '';
+            } else {
             document.getElementById('verdictPanel').innerHTML =
                 '<h4>Case Verdict</h4>' +
                 '<div class="mark-buttons">' +
@@ -6180,8 +6191,9 @@ OSS_REVIEW_TEMPLATE = '''
                 '" onchange="updatePassReason(this.value)">' + (ann.pass_reason || '') + '</textarea>';
             evalHtml += '</div>';
             document.getElementById('evaluationPanel').innerHTML = evalHtml;
+            } // end if not annotator mode
 
-            // Knowledge panel
+            // Knowledge panel (visible to both reviewer and annotator)
             let kHtml = '<div class="knowledge-panel">';
             kHtml += '<h4>Knowledge Points & Apps</h4>';
             kHtml += '<div class="knowledge-section">';
@@ -6335,6 +6347,21 @@ OSS_REVIEW_TEMPLATE = '''
             } catch (err) { console.error('Save error note failed:', err); }
         }
 
+        async function restoreDeletedSteps() {
+            if (!confirm('Restore all deleted steps?')) return;
+            const deleted = (annotation.deleted_steps || []).slice();
+            for (const origIdx of deleted) {
+                try {
+                    await fetch('/api/oss/undelete_step', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ folder_name: folderName, oss_folder: ossFolder, original_index: origIdx })
+                    });
+                } catch(e) {}
+            }
+            loadTask();
+        }
+
         async function setAnnotatorStatus(s) {
             if (annotatorStatus === s) s = 'not_started';
             annotatorStatus = s;
@@ -6431,10 +6458,40 @@ OSS_REVIEW_TEMPLATE = '''
             }
         }
 
+        function codeToDescription(code) {
+            // Reverse-map pyautogui code to human-readable description
+            var m;
+            m = code.match(/pyautogui\.write\(['"](.*?)['"]\)/);
+            if (m) return '\u2328\ufe0f Type: ' + m[1];
+            m = code.match(/pyautogui\.hotkey\((.+)\)/);
+            if (m) return '\u2328\ufe0f Press: ' + m[1].replace(/['"]/g,'').replace(/,\s*/g,' + ');
+            m = code.match(/pyautogui\.press\(['"](.*?)['"]\)/);
+            if (m) return '\u2328\ufe0f Press: ' + m[1];
+            m = code.match(/pyautogui\.moveTo\((\d+),\s*(\d+)\).*dragTo\((\d+),\s*(\d+)\)/);
+            if (m) return 'Drag from (' + m[1] + ', ' + m[2] + ') to (' + m[3] + ', ' + m[4] + ')';
+            m = code.match(/pyautogui\.doubleClick\((\d+),\s*(\d+)\)/);
+            if (m) return 'Double left Click at (' + m[1] + ', ' + m[2] + ')';
+            m = code.match(/pyautogui\.rightClick\((\d+),\s*(\d+)\)/);
+            if (m) return 'Right Click at (' + m[1] + ', ' + m[2] + ')';
+            m = code.match(/pyautogui\.click\((\d+),\s*(\d+)\)/);
+            if (m) return 'Single left Click at (' + m[1] + ', ' + m[2] + ')';
+            m = code.match(/pyautogui\.scroll\((-?\d+)\)/);
+            if (m) { var n = parseInt(m[1]); return n < 0 ? '\u2b07\ufe0f\u00d7' + Math.abs(n) + ' Scroll Down' : '\u2b06\ufe0f\u00d7' + n + ' Scroll Up'; }
+            return code;
+        }
+
         async function saveCode(stepIdx, value) {
             const step = taskData && taskData.steps[stepIdx];
             if (step) {
                 step.code = value;
+                // Sync description from code
+                step.description = codeToDescription(value);
+                // Update description display in stacked view
+                var card = document.getElementById('stacked-step-' + stepIdx);
+                if (card) {
+                    var descEl = card.querySelector('.description');
+                    if (descEl) descEl.textContent = step.description;
+                }
                 const origIdx = step.original_index != null ? step.original_index : stepIdx;
                 try {
                     await fetch('/api/oss/update_code', {
@@ -6888,11 +6945,11 @@ OSS_REVIEW_TEMPLATE = '''
             html += '</div>';
             // Correctness reason (short verdict)
             if (r.correctness_reason) {
-                html += '<div class="ai-reason"><b>Verdict:</b> ' + r.correctness_reason + '</div>';
+                html += '<div class="ai-reason"><b>\u5224\u5b9a\u7ed3\u679c (Verdict):</b> ' + r.correctness_reason + '</div>';
             }
             // AI reasoning (detailed analysis)
             if (r.reasoning) {
-                html += '<div class="ai-reasoning"><b>AI Analysis:</b> ' + r.reasoning + '</div>';
+                html += '<div class="ai-reasoning"><b>AI \u5206\u6790:</b> ' + r.reasoning + '</div>';
             }
             if (r.justification_issues && r.justification_issues.length > 0) {
                 html += '<div class="ai-issues">';
@@ -7805,6 +7862,28 @@ def api_oss_delete_step():
     return jsonify({'success': True})
 
 
+@app.route('/api/oss/undelete_step', methods=['POST'])
+@any_login_required
+def api_oss_undelete_step():
+    """Restore a previously deleted step."""
+    data = request.json
+    folder_name = data.get('folder_name', '')
+    oss_folder = data.get('oss_folder', 'recordings_0303')
+    original_index = data.get('original_index')
+
+    ann_key = f"{oss_folder}/{folder_name}"
+    oss_annotations = load_oss_annotations()
+    existing = oss_annotations.get(ann_key, {})
+    deleted = existing.get('deleted_steps', [])
+    if original_index in deleted:
+        deleted.remove(original_index)
+    existing['deleted_steps'] = sorted(deleted)
+    oss_annotations[ann_key] = existing
+    save_oss_annotations(oss_annotations)
+    _sync_overlay_to_oss(oss_folder, folder_name)
+    return jsonify({'success': True, 'deleted_steps': deleted})
+
+
 @app.route('/api/oss/mark_step_error', methods=['POST'])
 @reviewer_api_required
 def api_oss_mark_step_error():
@@ -8344,8 +8423,11 @@ def api_oss_annotator_tasks():
         return jsonify({'error': 'Missing folder or user'})
 
     try:
+        import time as _t
+        refresh = request.args.get('refresh', '0') == '1'
         cached = _dashboard_cache.get(folder)
-        if not cached:
+        # Re-fetch if cache is stale (>120s) or forced refresh or no cache
+        if not cached or refresh or (_t.time() - cached.get('_timestamp', 0)) > 120:
             cached = _fetch_dashboard_data(folder)
 
         annotators = cached.get('annotators', {})
@@ -8475,6 +8557,7 @@ ANNOTATOR_DASHBOARD_TEMPLATE = '''
             <input type="text" id="ossFolder" placeholder="OSS Folder (e.g. recordings_0303)" />
             <input type="text" id="username" placeholder="Your username" />
             <button id="loadBtn" onclick="loadTasks()">Load My Tasks</button>
+            <button id="refreshBtn" style="background:#555;display:none;" onclick="loadTasks(true)">Refresh</button>
         </div>
         <a class="back-link" href="/logout">Logout</a>
     </div>
@@ -8494,7 +8577,7 @@ ANNOTATOR_DASHBOARD_TEMPLATE = '''
         // Auto-load if both params present
         if (params.get('folder') && params.get('user')) loadTasks();
 
-        async function loadTasks() {
+        async function loadTasks(forceRefresh) {
             const folder = document.getElementById('ossFolder').value.trim();
             const user = document.getElementById('username').value.trim();
             if (!folder || !user) { alert('Both fields required'); return; }
@@ -8505,7 +8588,7 @@ ANNOTATOR_DASHBOARD_TEMPLATE = '''
             document.getElementById('taskGrid').innerHTML = '<div class="loading">Loading your tasks...</div>';
 
             try {
-                const resp = await fetch('/api/oss/annotator_tasks?folder=' + encodeURIComponent(folder) + '&user=' + encodeURIComponent(user));
+                const resp = await fetch('/api/oss/annotator_tasks?folder=' + encodeURIComponent(folder) + '&user=' + encodeURIComponent(user) + (forceRefresh ? '&refresh=1' : ''));
                 const data = await resp.json();
 
                 if (data.error) {
@@ -8575,6 +8658,7 @@ ANNOTATOR_DASHBOARD_TEMPLATE = '''
             } finally {
                 btn.disabled = false;
                 btn.textContent = 'Load My Tasks';
+                document.getElementById('refreshBtn').style.display = 'inline-block';
             }
         }
     </script>
