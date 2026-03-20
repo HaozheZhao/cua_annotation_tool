@@ -5241,7 +5241,7 @@ OSS_REVIEW_TEMPLATE = '''
                 const adj = coordAdjustments[String(origIdx)];
                 const isAdjusted = !!adj;
                 const origCoord = isAdjusted ? (adj.original || step.coordinate) : step.coordinate;
-                const imgUrl = '/oss_frame/' + encodeURIComponent(folderName) + '/' + step.video_time + '?folder=' + encodeURIComponent(ossFolder);
+                const imgUrl = '/oss_frame/' + encodeURIComponent(folderName) + '/' + parseFloat(step.video_time).toFixed(1) + '?folder=' + encodeURIComponent(ossFolder);
 
                 const hasStepError = !!stepErrors[String(origIdx)];
                 html += '<div class="stacked-step-card' + (hasStepError ? ' has-error' : '') + '" id="stacked-step-' + idx + '" onclick="onStackedStepClick(' + idx + ')">';
@@ -5655,7 +5655,7 @@ OSS_REVIEW_TEMPLATE = '''
                 const origIdx = step.original_index != null ? step.original_index : globalIdx;
                 const adj = coordAdjustments[String(origIdx)];
                 const isAdjusted = !!adj;
-                const imgUrl = '/oss_frame/' + encodeURIComponent(folderName) + '/' + step.video_time + '?folder=' + encodeURIComponent(ossFolder);
+                const imgUrl = '/oss_frame/' + encodeURIComponent(folderName) + '/' + parseFloat(step.video_time).toFixed(1) + '?folder=' + encodeURIComponent(ossFolder);
 
                 // AI check class for card border color
                 const aiR = getAiStepResult(origIdx);
@@ -5787,7 +5787,7 @@ OSS_REVIEW_TEMPLATE = '''
             document.getElementById('detailPrevBtn').disabled = idx <= 0;
             document.getElementById('detailNextBtn').disabled = idx >= steps.length - 1;
 
-            const imgUrl = '/oss_frame/' + encodeURIComponent(folderName) + '/' + step.video_time + '?folder=' + encodeURIComponent(ossFolder);
+            const imgUrl = '/oss_frame/' + encodeURIComponent(folderName) + '/' + parseFloat(step.video_time).toFixed(1) + '?folder=' + encodeURIComponent(ossFolder);
 
             let html = '<div class="image-info" id="detailResInfo"><div class="resolution-info">Res: <b>' + videoWidth + ' x ' + videoHeight + '</b></div></div>';
             html += '<div style="position:relative;display:inline-block;max-width:100%;background:#000;border-radius:6px;overflow:hidden;margin-bottom:10px;" id="detailImgContainer" onclick="handleDetailImageClick(event,' + idx + ')">';
