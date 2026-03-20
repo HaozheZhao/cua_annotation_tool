@@ -1469,10 +1469,10 @@
                 const isExpanded = !!expandedPersons[user];
                 const color = hashColor(user);
                 const letter = user.charAt(0).toUpperCase();
-                const safeUser = user.replace(/'/g, "\\\\'");
+                const safeUser = user.replace(/'/g, "\\\'");
 
                 html += '<div class="person-group">';
-                html += '<div class="person-header" onclick="togglePerson(\\'' + safeUser + '\\')">';
+                html += '<div class="person-header" onclick="togglePerson(\'' + safeUser + '\')">';
                 html += '<span class="person-toggle' + (isExpanded ? ' expanded' : '') + '" id="ptoggle-' + user + '">&#9654;</span>';
                 html += '<span class="person-avatar" style="background:' + color + '">' + letter + '</span>';
                 html += '<span class="person-name">' + user + '</span>';
@@ -1506,16 +1506,16 @@
                     const nStatusLabel = nStatus.charAt(0).toUpperCase() + nStatus.slice(1);
                     const nTitle = nRec.task_name || nRec.task_id || nRec.folder_name.substring(0, 30);
                     html += '<div class="rec-item ' + nStatus + (nIsActive ? ' active' : '') + '" ' +
-                        'onclick="switchRecording(\\'' + nRec.folder_name.replace(/'/g, "\\\\'") + '\\')">' +
+                        'onclick="switchRecording(\'' + nRec.folder_name.replace(/'/g, "\\\'") + '\')">' +
                         '<div class="rec-title" title="' + nRec.folder_name + '">' + nTitle + '</div>' +
                         '<span class="rec-status ' + nStatus + '">' + nStatusLabel + '</span>' +
                         '</div>';
 
                     // Older versions toggle
                     if (hasOlder) {
-                        const safeBase = base.replace(/'/g, "\\\\'");
+                        const safeBase = base.replace(/'/g, "\\\'");
                         const vExpanded = !!expandedVersionGroups[base];
-                        html += '<div class="version-toggle" onclick="event.stopPropagation();toggleVersionGroup(\\'' + safeBase + '\\')">';
+                        html += '<div class="version-toggle" onclick="event.stopPropagation();toggleVersionGroup(\'' + safeBase + '\')">';
                         html += (vExpanded ? '&#9660; ' : '&#9654; ') + (versions.length - 1) + ' older version(s)';
                         html += '</div>';
                         if (vExpanded) {
@@ -1526,7 +1526,7 @@
                                 const oStatusLabel = oStatus.charAt(0).toUpperCase() + oStatus.slice(1);
                                 const oTitle = oRec.task_name || oRec.task_id || oRec.folder_name.substring(0, 30);
                                 html += '<div class="rec-item older-version ' + oStatus + (oIsActive ? ' active' : '') + '" ' +
-                                    'onclick="switchRecording(\\'' + oRec.folder_name.replace(/'/g, "\\\\'") + '\\')">' +
+                                    'onclick="switchRecording(\'' + oRec.folder_name.replace(/'/g, "\\\'") + '\')">' +
                                     '<div class="rec-title" title="' + oRec.folder_name + '">' + oTitle + '</div>' +
                                     '<span class="rec-status ' + oStatus + '">' + oStatusLabel + '</span>' +
                                     '</div>';
@@ -2628,8 +2628,8 @@
             document.getElementById('verdictPanel').innerHTML =
                 '<h4>Case Verdict</h4>' +
                 '<div class="mark-buttons">' +
-                '<button class="mark-btn pass' + (ann.mark === 'pass' ? ' active' : '') + '" onclick="setMark(\\'pass\\')">PASS</button>' +
-                '<button class="mark-btn fail' + (ann.mark === 'fail' ? ' active' : '') + '" onclick="setMark(\\'fail\\')">FAIL</button>' +
+                '<button class="mark-btn pass' + (ann.mark === 'pass' ? ' active' : '') + '" onclick="setMark(\'pass\')">PASS</button>' +
+                '<button class="mark-btn fail' + (ann.mark === 'fail' ? ' active' : '') + '" onclick="setMark(\'fail\')">FAIL</button>' +
                 '<button class="mark-btn unclear' + (!ann.mark ? ' active' : '') + '" onclick="setMark(null)">UNCLEAR</button>' +
                 '</div>';
 
@@ -2648,7 +2648,7 @@
                 if (d.primary) evalHtml += ' <span class="label-primary">Primary</span>';
                 evalHtml += '</label><div class="rating-stars">';
                 for (let n = 1; n <= 5; n++) {
-                    evalHtml += '<button class="rating-star' + ((scores[d.key] || 0) >= n ? ' active' : '') + '" onclick="setCaseRating(\\'' + d.key + '\\',' + n + ')">' + n + '</button>';
+                    evalHtml += '<button class="rating-star' + ((scores[d.key] || 0) >= n ? ' active' : '') + '" onclick="setCaseRating(\'' + d.key + '\',' + n + ')">' + n + '</button>';
                 }
                 evalHtml += '</div></div>';
             });
@@ -2674,12 +2674,12 @@
                 kHtml += '<div class="knowledge-item"><label>' + f.label + '</label>';
                 kHtml += '<div class="knowledge-tags">';
                 tags.forEach(tag => {
-                    kHtml += '<span class="knowledge-tag">' + tag + '<span class="remove-tag" onclick="removeTag(\\'' + f.key + '\\',\\'' + tag.replace(/'/g, "\\\\'") + '\\')">x</span></span>';
+                    kHtml += '<span class="knowledge-tag">' + tag + '<span class="remove-tag" onclick="removeTag(\'' + f.key + '\',\'' + tag.replace(/'/g, "\\\'") + '\')">x</span></span>';
                 });
                 kHtml += '</div>';
                 kHtml += '<div class="knowledge-input-row">';
                 kHtml += '<input type="text" class="knowledge-input" id="' + f.inputId + '" placeholder="Add...">';
-                kHtml += '<button class="knowledge-add-btn" onclick="addTag(\\'' + f.key + '\\',\\'' + f.inputId + '\\')">+</button>';
+                kHtml += '<button class="knowledge-add-btn" onclick="addTag(\'' + f.key + '\',\'' + f.inputId + '\')">+</button>';
                 kHtml += '</div></div>';
             });
             kHtml += '</div>';

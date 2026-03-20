@@ -176,7 +176,7 @@
                         const status = rec.review_status || 'unreviewed';
                         const hasErr = rec.error_count > 0;
                         const cardUrl = '/annotator/' + encodeURIComponent(rec.folder_name) + '?folder=' + encodeURIComponent(folder) + '&direct=1';
-                        gridHtml += '<div class="task-card' + (hasErr ? ' has-errors' : '') + (vi > 0 ? ' older-version' : '') + '" onclick="window.location.href=\\'' + cardUrl + '\\'">';
+                        gridHtml += '<div class="task-card' + (hasErr ? ' has-errors' : '') + (vi > 0 ? ' older-version' : '') + '" onclick="window.location.href=\'' + cardUrl + '\'">';
                         gridHtml += '<div class="task-title">' + tid + '</div>';
                         if (rec.query) gridHtml += '<div class="task-query">' + rec.query + '</div>';
                         gridHtml += '<div class="task-badges">';

@@ -895,7 +895,7 @@
                             <label>OSWorld Overlap <span class="label-hint">(与OSWorld重叠)</span></label>
                             <div class="knowledge-tags" id="osworld-tags">
                                 ${(ann.osworld_overlap || task.osworld_overlap || []).map(tag =>
-                                    `<span class="knowledge-tag">${tag}<span class="remove-tag" onclick="removeTag('osworld_overlap', '${tag.replace(/'/g, "\\'")}')">×</span></span>`
+                                    `<span class="knowledge-tag">${tag}<span class="remove-tag" onclick="removeTag('osworld_overlap', '${tag.replace(/'/g, "\'")}')">×</span></span>`
                                 ).join('')}
                             </div>
                             <div class="knowledge-input-row">
@@ -907,7 +907,7 @@
                             <label>Custom Nodes <span class="label-hint">(自定义节点)</span></label>
                             <div class="knowledge-tags" id="custom-tags">
                                 ${(ann.custom_nodes || task.custom_nodes || []).map(tag =>
-                                    `<span class="knowledge-tag">${tag}<span class="remove-tag" onclick="removeTag('custom_nodes', '${tag.replace(/'/g, "\\'")}')">×</span></span>`
+                                    `<span class="knowledge-tag">${tag}<span class="remove-tag" onclick="removeTag('custom_nodes', '${tag.replace(/'/g, "\'")}')">×</span></span>`
                                 ).join('')}
                             </div>
                             <div class="knowledge-input-row">
@@ -919,7 +919,7 @@
                             <label>Related Apps <span class="label-hint">(相关应用)</span></label>
                             <div class="knowledge-tags" id="apps-tags">
                                 ${(ann.related_apps || task.related_apps || []).map(tag =>
-                                    `<span class="knowledge-tag">${tag}<span class="remove-tag" onclick="removeTag('related_apps', '${tag.replace(/'/g, "\\'")}')">×</span></span>`
+                                    `<span class="knowledge-tag">${tag}<span class="remove-tag" onclick="removeTag('related_apps', '${tag.replace(/'/g, "\'")}')">×</span></span>`
                                 ).join('')}
                             </div>
                             <div class="knowledge-input-row">
