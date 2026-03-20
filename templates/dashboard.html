@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CUA Dashboard - OSS Recordings</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a14;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, #0d1b2a 0%, #1b2838 50%, #16213e 100%);
+            padding: 20px 28px;
+            border-bottom: 3px solid transparent;
+            border-image: linear-gradient(90deg, #00d9ff, #7c4dff, #00d9ff) 1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .header h1 {
+            font-size: 1.6em;
+            background: linear-gradient(135deg, #00d9ff 0%, #7c4dff 50%, #00d9ff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+        }
+        .header-controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .header-controls input {
+            padding: 10px 14px;
+            border: 1px solid #333;
+            border-radius: 8px;
+            background: rgba(15, 15, 26, 0.8);
+            color: #e0e0e0;
+            font-size: 0.9em;
+            width: 260px;
+            transition: border-color 0.2s;
+        }
+        .header-controls input:focus { border-color: #00d9ff; outline: none; }
+        .header-controls button {
+            padding: 10px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s;
+            font-size: 0.9em;
+        }
+        .btn-load {
+            background: linear-gradient(135deg, #00d9ff, #0099cc);
+            color: #000;
+            position: relative;
+            overflow: hidden;
+        }
+        .btn-load:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(0, 217, 255, 0.3); }
+        .btn-load:disabled { background: #333; color: #666; cursor: not-allowed; transform: none; box-shadow: none; }
+        .btn-load.loading::after {
+            content: '';
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 18px; height: 18px;
+            margin: -9px 0 0 -9px;
+            border: 2px solid transparent;
+            border-top-color: #000;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .auto-poll-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #888;
+            font-size: 0.85em;
+        }
+        .nav-link {
+            color: #00d9ff;
+            text-decoration: none;
+            font-size: 0.9em;
+            padding: 6px 14px;
+            border: 1px solid #00d9ff33;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+        .nav-link:hover { background: rgba(0,217,255,0.1); border-color: #00d9ff; }
+
+        /* Stats row */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 16px;
+            padding: 20px 28px;
+            background: #0d0d18;
+        }
+        .stat-card {
+            background: linear-gradient(145deg, #151525 0%, #1a1a2e 100%);
+            border-radius: 12px;
+            padding: 18px 20px;
+            border: 1px solid #252542;
+            transition: all 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            border-radius: 12px 12px 0 0;
+        }
+        .stat-card:nth-child(1)::before { background: linear-gradient(90deg, #00d9ff, #0099cc); }
+        .stat-card:nth-child(2)::before { background: linear-gradient(90deg, #7c4dff, #536dfe); }
+        .stat-card:nth-child(3)::before { background: linear-gradient(90deg, #4caf50, #66bb6a); }
+        .stat-card:nth-child(4)::before { background: linear-gradient(90deg, #f44336, #ff5252); }
+        .stat-card:nth-child(5)::before { background: linear-gradient(90deg, #888, #aaa); }
+        .stat-card:hover { transform: translateY(-3px); box-shadow: 0 8px 25px rgba(0,0,0,0.3); border-color: #444; }
+        .stat-card .stat-icon {
+            font-size: 1.6em;
+            margin-bottom: 8px;
+        }
+        .stat-card .stat-label {
+            font-size: 0.78em;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .stat-card .stat-value {
+            font-size: 1.8em;
+            font-weight: 800;
+        }
+        .stat-card:nth-child(1) .stat-value { color: #00d9ff; }
+        .stat-card:nth-child(2) .stat-value { color: #7c4dff; }
+        .stat-card:nth-child(3) .stat-value { color: #4caf50; }
+        .stat-card:nth-child(4) .stat-value { color: #f44336; }
+        .stat-card:nth-child(5) .stat-value { color: #999; }
+        .stat-card .stat-sub {
+            font-size: 0.75em;
+            color: #666;
+            margin-top: 4px;
+        }
+
+        .container { padding: 20px 28px; }
+
+        /* Annotator cards */
+        .annotator-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+            gap: 18px;
+            margin-top: 8px;
+        }
+        .annotator-card {
+            background: linear-gradient(145deg, #151525 0%, #1a1a2e 100%);
+            border-radius: 12px;
+            border: 1px solid #252542;
+            overflow: hidden;
+            transition: all 0.3s;
+            animation: fadeIn 0.4s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .annotator-card:hover { border-color: #00d9ff44; transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.25); }
+        .annotator-header {
+            padding: 16px 18px;
+            background: linear-gradient(135deg, rgba(30, 58, 95, 0.5) 0%, rgba(22, 33, 62, 0.5) 100%);
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .annotator-header h3 {
+            color: #e0e0e0;
+            font-size: 1em;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            font-size: 1em;
+            color: white;
+            flex-shrink: 0;
+        }
+        .annotator-meta {
+            display: flex;
+            flex-direction: column;
+        }
+        .annotator-meta .username { color: #e0e0e0; font-weight: 700; }
+        .annotator-meta .task-count { color: #888; font-size: 0.8em; font-weight: normal; }
+        .annotator-stats {
+            display: flex;
+            gap: 8px;
+            font-size: 0.78em;
+        }
+        .stat-badge {
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-weight: bold;
+        }
+        .stat-badge.reviewed { background: rgba(76, 175, 80, 0.2); color: #4caf50; border: 1px solid rgba(76, 175, 80, 0.3); }
+        .stat-badge.rejected { background: rgba(244, 67, 54, 0.2); color: #f44336; border: 1px solid rgba(244, 67, 54, 0.3); }
+        .stat-badge.unreviewed { background: rgba(150, 150, 150, 0.15); color: #999; border: 1px solid rgba(150, 150, 150, 0.2); }
+
+        /* Progress bar in annotator card */
+        .annotator-progress {
+            padding: 0 18px 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .progress-track {
+            flex: 1;
+            height: 6px;
+            background: #252542;
+            border-radius: 3px;
+            overflow: hidden;
+            display: flex;
+        }
+        .progress-fill-reviewed {
+            height: 100%;
+            background: linear-gradient(90deg, #4caf50, #66bb6a);
+            transition: width 0.5s ease;
+        }
+        .progress-fill-rejected {
+            height: 100%;
+            background: linear-gradient(90deg, #f44336, #ff5252);
+            transition: width 0.5s ease;
+        }
+        .progress-pct {
+            font-size: 0.75em;
+            color: #888;
+            min-width: 36px;
+            text-align: right;
+        }
+
+        .expand-icon {
+            transition: transform 0.3s;
+            font-size: 0.75em;
+            color: #666;
+        }
+        .expand-icon.expanded { transform: rotate(90deg); }
+
+        .task-list {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s ease;
+        }
+        .task-list.expanded { max-height: 3000px; }
+        .task-entry {
+            padding: 10px 18px;
+            border-top: 1px solid #1e1e35;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.85em;
+            transition: background 0.2s;
+            animation: fadeIn 0.3s ease;
+        }
+        .task-entry:hover { background: rgba(0, 217, 255, 0.03); }
+        .task-entry .task-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            flex: 1;
+            min-width: 0;
+        }
+        .task-entry .task-id { color: #00d9ff; font-weight: 600; }
+        .task-entry .task-query {
+            color: #888;
+            font-size: 0.85em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .task-entry .task-date { color: #555; font-size: 0.8em; }
+        .task-entry .task-actions { display: flex; gap: 8px; align-items: center; }
+        .review-badge {
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 0.78em;
+            font-weight: bold;
+        }
+        .review-badge.reviewed { background: rgba(76, 175, 80, 0.2); color: #4caf50; }
+        .review-badge.rejected { background: rgba(244, 67, 54, 0.2); color: #f44336; }
+        .review-badge.unreviewed { background: rgba(150, 150, 150, 0.1); color: #666; }
+        .btn-view {
+            padding: 5px 14px;
+            border: 1px solid #00d9ff44;
+            border-radius: 6px;
+            background: transparent;
+            color: #00d9ff;
+            cursor: pointer;
+            font-size: 0.85em;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+        .btn-view:hover { background: #00d9ff; color: #000; border-color: #00d9ff; }
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+            color: #555;
+        }
+        .empty-state .empty-icon { font-size: 4em; margin-bottom: 20px; opacity: 0.3; }
+        .empty-state h2 { color: #444; margin-bottom: 12px; font-size: 1.4em; }
+        .empty-state p { color: #555; font-size: 1em; }
+        .btn-export-all {
+            padding: 10px 24px;
+            border: none; border-radius: 8px;
+            background: linear-gradient(135deg, #4caf50, #2e7d32);
+            color: white; cursor: pointer;
+            font-weight: bold; font-size: 0.9em;
+            transition: all 0.3s;
+        }
+        .btn-export-all:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(76,175,80,0.3); }
+        .btn-export-all:disabled { background: #333; color: #666; cursor: not-allowed; transform: none; box-shadow: none; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>OSS Recording Dashboard</h1>
+        <div class="header-controls">
+            <a href="/" class="nav-link">&#8592; Local Review</a>
+            <a href="/logout" class="nav-link" style="border-color:#f44336;color:#f44336;">Logout</a>
+            <input type="text" id="ossFolder" value="recordings_0303" placeholder="OSS upload folder..." />
+            <button class="btn-load" id="loadBtn" onclick="loadDashboard()">Load</button>
+            <label class="auto-poll-label">
+                <input type="checkbox" id="autoPoll" /> Auto-refresh (60s)
+            </label>
+            <button class="btn-export-all" id="exportAllBtn" onclick="exportAll()" style="display:none;">Export All Graded</button>
+        </div>
+    </div>
+    <!-- Export progress overlay -->
+    <div id="exportOverlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,15,26,0.92);z-index:2000;justify-content:center;align-items:center;">
+        <div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:30px 40px;text-align:center;min-width:360px;">
+            <div style="color:#00d9ff;font-size:1.2em;margin-bottom:16px;" id="exportTitle">Exporting...</div>
+            <div style="background:#252542;border-radius:6px;height:12px;overflow:hidden;margin-bottom:12px;">
+                <div id="exportProgressBar" style="height:100%;background:linear-gradient(90deg,#00d9ff,#7c4dff);width:0%;transition:width 0.3s;"></div>
+            </div>
+            <div style="color:#888;font-size:0.85em;" id="exportStatus">Preparing export...</div>
+        </div>
+    </div>
+    <div class="stats-row" id="statsRow" style="display:none;">
+        <div class="stat-card">
+            <div class="stat-icon">&#128202;</div>
+            <div class="stat-label">Total</div>
+            <div class="stat-value" id="totalCount">0</div>
+            <div class="stat-sub">recordings loaded</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">&#128101;</div>
+            <div class="stat-label">Annotators</div>
+            <div class="stat-value" id="annotatorCount">0</div>
+            <div class="stat-sub">contributors</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">&#9989;</div>
+            <div class="stat-label">Reviewed</div>
+            <div class="stat-value" id="reviewedCount">0</div>
+            <div class="stat-sub" id="reviewedPct">0% complete</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">&#10060;</div>
+            <div class="stat-label">Rejected</div>
+            <div class="stat-value" id="rejectedCount">0</div>
+            <div class="stat-sub" id="rejectedPct">0% of total</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">&#9203;</div>
+            <div class="stat-label">Unreviewed</div>
+            <div class="stat-value" id="unreviewedCount">0</div>
+            <div class="stat-sub" id="unreviewedPct">0% remaining</div>
+        </div>
+    </div>
+    <div class="container" id="content">
+        <div class="empty-state">
+            <div class="empty-icon">&#128194;</div>
+            <h2>No data loaded</h2>
+            <p>Enter an OSS upload folder name above and click Load to get started.</p>
+        </div>
+    </div>
+
+    <script>
+        let pollInterval = null;
+        let dashboardData = null;
+
+        function hashColor(str) {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {
+                hash = str.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            const hue = Math.abs(hash) % 360;
+            return 'hsl(' + hue + ', 55%, 45%)';
+        }
+
+        async function loadDashboard() {
+            const folder = document.getElementById('ossFolder').value.trim();
+            if (!folder) return;
+
+            const loadBtn = document.getElementById('loadBtn');
+            loadBtn.disabled = true;
+            loadBtn.textContent = '';
+            loadBtn.classList.add('loading');
+
+            try {
+                const resp = await fetch('/api/oss/dashboard_data?folder=' + encodeURIComponent(folder));
+                const data = await resp.json();
+
+                if (data.error) {
+                    document.getElementById('content').innerHTML =
+                        '<div class="empty-state"><div class="empty-icon">&#9888;</div><h2>Error</h2><p>' + data.error + '</p></div>';
+                    return;
+                }
+
+                dashboardData = data;
+                renderDashboard(data);
+
+                document.getElementById('statsRow').style.display = 'grid';
+                document.getElementById('exportAllBtn').style.display = 'inline-block';
+
+            } catch (err) {
+                document.getElementById('content').innerHTML =
+                    '<div class="empty-state"><div class="empty-icon">&#9888;</div><h2>Error</h2><p>' + err.message + '</p></div>';
+            } finally {
+                loadBtn.disabled = false;
+                loadBtn.textContent = 'Load';
+                loadBtn.classList.remove('loading');
+            }
+        }
+
+        function renderDashboard(data) {
+            const annotators = data.annotators || {};
+            const keys = Object.keys(annotators).sort();
+
+            let totalAll = 0, reviewedAll = 0, rejectedAll = 0, unreviewedAll = 0;
+            keys.forEach(k => {
+                const a = annotators[k];
+                totalAll += a.total;
+                reviewedAll += a.reviewed;
+                rejectedAll += a.rejected;
+                unreviewedAll += a.unreviewed;
+            });
+
+            document.getElementById('totalCount').textContent = totalAll;
+            document.getElementById('annotatorCount').textContent = keys.length;
+            document.getElementById('reviewedCount').textContent = reviewedAll;
+            document.getElementById('rejectedCount').textContent = rejectedAll;
+            document.getElementById('unreviewedCount').textContent = unreviewedAll;
+
+            const pct = totalAll > 0 ? ((reviewedAll / totalAll) * 100).toFixed(1) : 0;
+            const rejPct = totalAll > 0 ? ((rejectedAll / totalAll) * 100).toFixed(1) : 0;
+            const unrPct = totalAll > 0 ? ((unreviewedAll / totalAll) * 100).toFixed(1) : 0;
+            document.getElementById('reviewedPct').textContent = pct + '% complete';
+            document.getElementById('rejectedPct').textContent = rejPct + '% of total';
+            document.getElementById('unreviewedPct').textContent = unrPct + '% remaining';
+
+            if (keys.length === 0) {
+                document.getElementById('content').innerHTML =
+                    '<div class="empty-state"><div class="empty-icon">&#128269;</div><h2>No recordings found</h2><p>Check the OSS folder name and try again.</p></div>';
+                return;
+            }
+
+            let html = '<div class="annotator-grid">';
+            keys.forEach((username, idx) => {
+                const a = annotators[username];
+                html += renderAnnotatorCard(username, a, idx);
+            });
+            html += '</div>';
+
+            document.getElementById('content').innerHTML = html;
+        }
+
+        function renderAnnotatorCard(username, data, idx) {
+            const folder = document.getElementById('ossFolder').value.trim();
+            const color = hashColor(username);
+            const letter = username.charAt(0).toUpperCase();
+            const completePct = data.total > 0 ? ((data.reviewed + data.rejected) / data.total * 100).toFixed(0) : 0;
+            const reviewedPct = data.total > 0 ? (data.reviewed / data.total * 100) : 0;
+            const rejectedPct = data.total > 0 ? (data.rejected / data.total * 100) : 0;
+
+            let tasksHtml = '';
+            (data.recordings || []).forEach(rec => {
+                const statusClass = rec.review_status || 'unreviewed';
+                const statusLabel = statusClass.charAt(0).toUpperCase() + statusClass.slice(1);
+                const query = rec.query || rec.task_id || '-';
+                const date = rec.upload_timestamp ? rec.upload_timestamp.split('T')[0] : '-';
+                tasksHtml +=
+                    '<div class="task-entry">' +
+                    '<div class="task-info">' +
+                    '<span class="task-id">' + (rec.task_name || rec.task_id || rec.folder_name) + '</span>' +
+                    '<span class="task-query" title="' + query + '">' + query + '</span>' +
+                    '<span class="task-date">' + date + '</span>' +
+                    '</div>' +
+                    '<div class="task-actions">' +
+                    '<span class="review-badge ' + statusClass + '">' + statusLabel + '</span>' +
+                    '<a class="btn-view" href="/oss_review/' + encodeURIComponent(rec.folder_name) + '?folder=' + encodeURIComponent(folder) + '">View</a>' +
+                    '</div></div>';
+            });
+
+            return '<div class="annotator-card" style="animation-delay:' + (idx * 0.05) + 's">' +
+                '<div class="annotator-header" onclick="toggleTaskList(\\'' + username + '\\')">' +
+                '<h3>' +
+                '<span class="expand-icon" id="icon-' + username + '">&#9654;</span>' +
+                '<span class="avatar" style="background:' + color + '">' + letter + '</span>' +
+                '<span class="annotator-meta"><span class="username">' + username + '</span>' +
+                '<span class="task-count">' + data.total + ' recordings</span></span>' +
+                '</h3>' +
+                '<div class="annotator-stats">' +
+                '<span class="stat-badge reviewed">' + data.reviewed + '</span>' +
+                '<span class="stat-badge rejected">' + data.rejected + '</span>' +
+                '<span class="stat-badge unreviewed">' + data.unreviewed + '</span>' +
+                (data.error_steps > 0 ? '<span class="stat-badge" style="background:rgba(244,67,54,0.15);color:#f44336;border:1px solid rgba(244,67,54,0.3);">' + data.corrected_steps + '/' + data.error_steps + ' fixed</span>' : '') +
+                '</div></div>' +
+                '<div class="annotator-progress">' +
+                '<div class="progress-track">' +
+                '<div class="progress-fill-reviewed" style="width:' + reviewedPct + '%"></div>' +
+                '<div class="progress-fill-rejected" style="width:' + rejectedPct + '%"></div>' +
+                '</div>' +
+                '<span class="progress-pct">' + completePct + '%</span>' +
+                '</div>' +
+                '<div class="task-list" id="tasks-' + username + '">' + tasksHtml + '</div>' +
+                '</div>';
+        }
+
+        function toggleTaskList(username) {
+            const el = document.getElementById('tasks-' + username);
+            const icon = document.getElementById('icon-' + username);
+            el.classList.toggle('expanded');
+            icon.classList.toggle('expanded');
+        }
+
+        // Auto-poll
+        document.getElementById('autoPoll').addEventListener('change', function() {
+            if (this.checked) {
+                pollInterval = setInterval(loadDashboard, 60000);
+            } else {
+                if (pollInterval) clearInterval(pollInterval);
+                pollInterval = null;
+            }
+        });
+
+        // Load on Enter key
+        document.getElementById('ossFolder').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') loadDashboard();
+        });
+
+        async function exportAll() {
+            const folder = document.getElementById('ossFolder').value.trim();
+            if (!folder) return;
+
+            const overlay = document.getElementById('exportOverlay');
+            overlay.style.display = 'flex';
+            document.getElementById('exportProgressBar').style.width = '10%';
+            document.getElementById('exportStatus').textContent = 'Checking graded recordings...';
+
+            try {
+                // First check how many to export
+                const checkResp = await fetch('/api/oss/export_progress?folder=' + encodeURIComponent(folder));
+                const checkData = await checkResp.json();
+
+                if (checkData.total === 0) {
+                    document.getElementById('exportTitle').textContent = 'Nothing to export';
+                    document.getElementById('exportStatus').textContent = 'No graded recordings found. Grade some recordings first.';
+                    document.getElementById('exportProgressBar').style.width = '100%';
+                    document.getElementById('exportProgressBar').style.background = '#f44336';
+                    setTimeout(() => { overlay.style.display = 'none'; }, 2000);
+                    return;
+                }
+
+                document.getElementById('exportStatus').textContent =
+                    'Exporting ' + checkData.total + ' graded recordings (' + checkData.cached + ' cached)...';
+                document.getElementById('exportProgressBar').style.width = '30%';
+
+                // Trigger the export download
+                document.getElementById('exportProgressBar').style.width = '50%';
+                document.getElementById('exportStatus').textContent = 'Building ZIP file with screenshots...';
+
+                // Use XMLHttpRequest for progress tracking
+                const xhr = new XMLHttpRequest();
+                xhr.open('GET', '/api/oss/export_all?folder=' + encodeURIComponent(folder), true);
+                xhr.responseType = 'blob';
+
+                xhr.onprogress = function(e) {
+                    if (e.lengthComputable) {
+                        const pct = Math.round(50 + (e.loaded / e.total) * 50);
+                        document.getElementById('exportProgressBar').style.width = pct + '%';
+                    } else {
+                        document.getElementById('exportProgressBar').style.width = '75%';
+                    }
+                };
+
+                xhr.onload = function() {
+                    if (xhr.status === 200) {
+                        document.getElementById('exportProgressBar').style.width = '100%';
+                        document.getElementById('exportStatus').textContent = 'Download starting...';
+
+                        // Trigger download
+                        const blob = xhr.response;
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'export_' + folder + '.zip';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+
+                        document.getElementById('exportTitle').textContent = 'Export Complete!';
+                        document.getElementById('exportStatus').textContent = checkData.total + ' recordings exported successfully.';
+                        setTimeout(() => { overlay.style.display = 'none'; }, 2000);
+                    } else {
+                        document.getElementById('exportTitle').textContent = 'Export Failed';
+                        document.getElementById('exportStatus').textContent = 'Server returned error ' + xhr.status;
+                        document.getElementById('exportProgressBar').style.background = '#f44336';
+                        setTimeout(() => { overlay.style.display = 'none'; }, 3000);
+                    }
+                };
+
+                xhr.onerror = function() {
+                    document.getElementById('exportTitle').textContent = 'Export Failed';
+                    document.getElementById('exportStatus').textContent = 'Network error occurred';
+                    document.getElementById('exportProgressBar').style.background = '#f44336';
+                    setTimeout(() => { overlay.style.display = 'none'; }, 3000);
+                };
+
+                xhr.send();
+
+            } catch (err) {
+                document.getElementById('exportTitle').textContent = 'Export Failed';
+                document.getElementById('exportStatus').textContent = err.message;
+                document.getElementById('exportProgressBar').style.background = '#f44336';
+                setTimeout(() => { overlay.style.display = 'none'; }, 3000);
+            }
+        }
+    </script>
+</body>
+</html>

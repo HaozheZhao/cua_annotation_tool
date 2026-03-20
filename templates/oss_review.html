@@ -1,0 +1,3541 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OSS Review - {{ folder_name }}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f1a;
+            color: #e0e0e0;
+            display: flex;
+            flex-direction: column;
+        }
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            padding: 10px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #00d9ff;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .header h1 { font-size: 1.1em; color: #00d9ff; }
+        .header-info { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+        .header-info span { color: #888; font-size: 0.8em; }
+        .header-info b { color: #e0e0e0; }
+        .btn-back {
+            padding: 5px 14px;
+            border: 1px solid #00d9ff;
+            border-radius: 4px;
+            background: transparent;
+            color: #00d9ff;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 0.85em;
+            transition: all 0.2s;
+        }
+        .btn-back:hover { background: #00d9ff; color: #000; }
+        .mode-toggle {
+            display: flex;
+            background: #16213e;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid #333;
+        }
+        .mode-toggle button {
+            padding: 5px 14px;
+            border: none;
+            background: transparent;
+            color: #888;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 0.8em;
+            transition: all 0.2s;
+        }
+        .mode-toggle button.active { background: #00d9ff; color: #000; }
+        .mode-toggle button:hover:not(.active) { color: #ccc; }
+
+        /* Main layout: recording sidebar | step sidebar | content */
+        .main-layout {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* Recording sidebar (left) */
+        .rec-sidebar {
+            width: 260px;
+            background: #0d1020;
+            border-right: 1px solid #252542;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .rec-sidebar-header {
+            padding: 10px 12px;
+            background: #16213e;
+            border-bottom: 1px solid #252542;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .rec-sidebar-header h3 { color: #888; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.5px; }
+        .rec-sidebar-header .rec-count { color: #00d9ff; font-size: 0.8em; font-weight: bold; }
+        .rec-filter {
+            padding: 6px 12px;
+            border-bottom: 1px solid #252542;
+        }
+        .rec-filter input {
+            width: 100%;
+            padding: 5px 8px;
+            border: 1px solid #333;
+            border-radius: 4px;
+            background: #0f0f1a;
+            color: #e0e0e0;
+            font-size: 0.8em;
+        }
+        .rec-filter input:focus { border-color: #00d9ff; outline: none; }
+        .rec-list {
+            flex: 1;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 4px 6px;
+            scrollbar-width: thin;
+            scrollbar-color: #333 #0d1020;
+        }
+        .rec-list::-webkit-scrollbar { width: 6px; }
+        .rec-list::-webkit-scrollbar-track { background: #0d1020; }
+        .rec-list::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+        .rec-list::-webkit-scrollbar-thumb:hover { background: #555; }
+
+        /* Person group */
+        .person-group { margin-bottom: 4px; }
+        .person-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 8px;
+            background: #151530;
+            border-radius: 5px;
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.15s;
+        }
+        .person-header:hover { background: #1e1e40; }
+        .person-toggle {
+            font-size: 0.65em;
+            color: #666;
+            transition: transform 0.2s;
+            flex-shrink: 0;
+            width: 12px;
+            text-align: center;
+        }
+        .person-toggle.expanded { transform: rotate(90deg); }
+        .person-avatar {
+            width: 22px; height: 22px;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 800; font-size: 0.7em; color: white;
+            flex-shrink: 0;
+        }
+        .person-name {
+            color: #ccc;
+            font-size: 0.8em;
+            font-weight: 600;
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .person-stats {
+            display: flex;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+        .person-stat {
+            font-size: 0.65em;
+            padding: 1px 5px;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+        .person-stat.rev { background: rgba(76,175,80,0.2); color: #4caf50; }
+        .person-stat.rej { background: rgba(244,67,54,0.2); color: #f44336; }
+        .person-stat.total { background: rgba(0,217,255,0.1); color: #00d9ff; }
+        .person-tasks {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.25s ease;
+            padding-left: 10px;
+        }
+        .person-tasks.expanded { max-height: 5000px; }
+
+        .rec-item {
+            padding: 6px 8px;
+            margin: 2px 0;
+            background: #131322;
+            border-radius: 5px;
+            cursor: pointer;
+            border-left: 3px solid transparent;
+            transition: all 0.15s;
+            font-size: 0.75em;
+        }
+        .rec-item:hover { background: #1e1e35; }
+        .rec-item.active { border-left-color: #00d9ff; background: #1e1e35; }
+        .rec-item.reviewed { border-left-color: #4caf50; }
+        .rec-item.rejected { border-left-color: #f44336; }
+        .rec-item .rec-title {
+            color: #ccc;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 1px;
+        }
+        .rec-item .rec-meta {
+            color: #666;
+            font-size: 0.85em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .rec-item .rec-status {
+            display: inline-block;
+            padding: 1px 5px;
+            border-radius: 8px;
+            font-size: 0.8em;
+            font-weight: bold;
+            margin-top: 1px;
+        }
+        .rec-item .rec-status.reviewed { background: rgba(76,175,80,0.2); color: #4caf50; }
+        .rec-item .rec-status.rejected { background: rgba(244,67,54,0.2); color: #f44336; }
+        .rec-item .rec-status.unreviewed { background: rgba(150,150,150,0.1); color: #666; }
+
+        /* Step sidebar */
+        .step-sidebar {
+            width: 180px;
+            min-width: 180px;
+            background: #16213e;
+            overflow-y: auto;
+            padding: 8px;
+            border-right: 1px solid #333;
+            flex-shrink: 0;
+        }
+        .step-sidebar-header {
+            padding: 6px 8px;
+            color: #888;
+            font-size: 0.75em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .step-item {
+            padding: 6px 8px;
+            margin: 2px 0;
+            background: #1a1a2e;
+            border-radius: 4px;
+            cursor: pointer;
+            border-left: 3px solid transparent;
+            transition: all 0.15s;
+            font-size: 0.8em;
+        }
+        .step-item:hover { background: #252542; }
+        .step-item.active { border-left-color: #00d9ff; background: #252542; }
+        .step-item .step-num { color: #00d9ff; font-weight: bold; }
+        .step-item .step-action { color: #888; font-size: 0.9em; }
+
+        /* Content area */
+        .content-area {
+            flex: 1;
+            padding: 12px 16px;
+            overflow-y: auto;
+        }
+        .annotator-info-bar {
+            background: linear-gradient(135deg, #1e3a5f 0%, #16213e 100%);
+            padding: 10px 14px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            border-left: 3px solid #ffc107;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            font-size: 0.85em;
+        }
+        .annotator-info-bar .info-item span { color: #888; }
+        .annotator-info-bar .info-item b { color: #ffc107; word-break: break-word; }
+
+        /* Screenshot */
+        .screenshot-container {
+            position: relative;
+            display: inline-block;
+            margin-bottom: 10px;
+            background: #000;
+            border-radius: 6px;
+            overflow: hidden;
+            max-width: 100%;
+        }
+        .screenshot-container img {
+            max-width: 100%;
+            max-height: 50vh;
+            display: block;
+        }
+        .coord-marker {
+            position: absolute;
+            width: 28px;
+            height: 28px;
+            border: 3px solid #ff0040;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            animation: pulse 1.5s infinite;
+            box-shadow: 0 0 12px rgba(255, 0, 64, 0.5);
+        }
+        .coord-marker::before {
+            content: '';
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 6px; height: 6px;
+            background: #ff0040;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+        .coord-marker::after {
+            content: attr(data-label);
+            position: absolute;
+            top: -24px; left: 50%;
+            transform: translateX(-50%);
+            background: #ff0040;
+            color: white;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 9px;
+            font-weight: bold;
+            white-space: nowrap;
+        }
+        .coord-marker.drag-end {
+            border-color: #00c8ff;
+            box-shadow: 0 0 12px rgba(0, 200, 255, 0.5);
+        }
+        .coord-marker.drag-end::before {
+            background: #00c8ff;
+        }
+        .coord-marker.drag-end::after {
+            background: #00c8ff;
+        }
+        .drag-line {
+            position: absolute;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .drag-line line {
+            stroke: #ff0040;
+            stroke-width: 2;
+            stroke-dasharray: 6, 3;
+        }
+        .drag-line polygon {
+            fill: #00c8ff;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+            50% { transform: translate(-50%, -50%) scale(1.15); opacity: 0.8; }
+        }
+
+        /* Step details */
+        .step-details {
+            background: #1a1a2e;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            border: 1px solid #333;
+        }
+        .step-details h4 { color: #00d9ff; margin-bottom: 6px; font-size: 0.9em; }
+        .step-details .code {
+            background: #0d1117;
+            padding: 8px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+            color: #7ee787;
+            margin-bottom: 6px;
+        }
+        .code-editable {
+            position: relative;
+        }
+        .code-edit-input {
+            width: 100%;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            color: #7ee787;
+            font-family: 'Courier New', monospace;
+            font-size: 1em;
+            padding: 4px 6px;
+            box-sizing: border-box;
+        }
+        .code-edit-input:focus {
+            outline: none;
+            border-color: #58a6ff;
+            box-shadow: 0 0 0 2px rgba(88,166,255,0.3);
+        }
+        .step-details .description { color: #ccc; line-height: 1.4; font-size: 0.9em; }
+        .step-details .justification {
+            color: #ffc107;
+            margin-top: 6px;
+            padding-top: 6px;
+            border-top: 1px solid #333;
+            border-left: 3px solid #ffc107;
+            padding-left: 8px;
+            font-size: 0.85em;
+        }
+        .adjusted-badge {
+            display: inline-block;
+            background: #ff9800;
+            color: #000;
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 0.7em;
+            font-weight: bold;
+            margin-left: 6px;
+        }
+        .original-coord { color: #888; font-size: 0.8em; text-decoration: line-through; margin-left: 6px; }
+        .current-coord { color: #4caf50; font-weight: bold; }
+
+        /* Review panel */
+        .review-panel {
+            background: #1a1a2e;
+            padding: 12px;
+            border-radius: 6px;
+            border: 1px solid #333;
+            margin-bottom: 10px;
+        }
+        .review-panel h4 { color: #ffc107; margin-bottom: 10px; font-size: 0.9em; }
+        .review-buttons { display: flex; gap: 8px; }
+        .review-btn {
+            padding: 8px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+            font-size: 0.9em;
+        }
+        .review-btn.reviewed { background: #2e7d32; color: #fff; }
+        .review-btn.reviewed:hover { background: #4caf50; }
+        .review-btn.reviewed.active { background: #4caf50; box-shadow: 0 0 10px #4caf50; }
+        .review-btn.rejected { background: #c62828; color: #fff; }
+        .review-btn.rejected:hover { background: #f44336; }
+        .review-btn.rejected.active { background: #f44336; box-shadow: 0 0 10px #f44336; }
+        .review-btn.unreviewed { background: #555; color: #fff; }
+        .review-btn.unreviewed:hover { background: #777; }
+        .review-btn.unreviewed.active { background: #777; box-shadow: 0 0 10px #777; }
+
+        /* Annotation panels */
+        .annotation-panel {
+            background: #1a1a2e;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            border: 1px solid #333;
+        }
+        .annotation-panel h4 { color: #ffc107; margin-bottom: 10px; font-size: 0.9em; }
+        .mark-buttons { display: flex; gap: 8px; margin-bottom: 10px; }
+        .mark-btn {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+            flex: 1;
+            font-size: 0.9em;
+        }
+        .mark-btn.pass { background: #2e7d32; color: white; }
+        .mark-btn.pass:hover { background: #4caf50; }
+        .mark-btn.pass.active { background: #4caf50; box-shadow: 0 0 10px #4caf50; }
+        .mark-btn.fail { background: #c62828; color: white; }
+        .mark-btn.fail:hover { background: #f44336; }
+        .mark-btn.fail.active { background: #f44336; box-shadow: 0 0 10px #f44336; }
+        .mark-btn.unclear { background: #555; color: white; }
+        .mark-btn.unclear:hover { background: #777; }
+        .mark-btn.unclear.active { background: #777; box-shadow: 0 0 10px #777; }
+
+        .case-evaluation {
+            background: linear-gradient(135deg, #1a2e1a 0%, #1a1a2e 100%);
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            border: 1px solid #2e7d32;
+        }
+        .case-evaluation h4 { color: #4caf50; margin-bottom: 10px; font-size: 0.9em; }
+        .case-evaluation.fail-mode {
+            background: linear-gradient(135deg, #2e1a1a 0%, #1a1a2e 100%);
+            border-color: #c62828;
+        }
+        .case-evaluation.fail-mode h4 { color: #f44336; }
+        .rating-section {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        .rating-item { background: #0d1117; padding: 10px; border-radius: 5px; }
+        .rating-item label { display: block; color: #888; font-size: 0.8em; margin-bottom: 6px; }
+        .rating-item .label-primary { color: #ffc107; font-size: 0.7em; margin-left: 4px; }
+        .rating-stars { display: flex; gap: 3px; }
+        .rating-star {
+            width: 28px; height: 28px;
+            border: none;
+            background: #333;
+            color: #666;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+        .rating-star:hover { background: #444; color: #aaa; }
+        .rating-star.active { background: #ffc107; color: #000; }
+        .pass-reason-input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #444;
+            border-radius: 5px;
+            background: #0d1117;
+            color: #e0e0e0;
+            resize: vertical;
+            min-height: 60px;
+            font-family: inherit;
+            font-size: 0.85em;
+        }
+        .pass-reason-input::placeholder { color: #555; }
+
+        .knowledge-panel {
+            background: linear-gradient(135deg, #1a1a3e 0%, #16213e 100%);
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            border: 1px solid #4a4a8a;
+        }
+        .knowledge-panel h4 { color: #9c88ff; margin-bottom: 10px; font-size: 0.9em; }
+        .knowledge-section {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .knowledge-item { background: #0d1117; padding: 10px; border-radius: 5px; }
+        .knowledge-item label {
+            display: block; color: #9c88ff;
+            font-size: 0.8em; margin-bottom: 6px; font-weight: bold;
+        }
+        .knowledge-item .label-hint { color: #666; font-size: 0.75em; font-weight: normal; }
+        .knowledge-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; min-height: 24px; }
+        .knowledge-tag {
+            display: inline-flex; align-items: center;
+            background: #4a4a8a; color: white;
+            padding: 3px 8px; border-radius: 12px; font-size: 0.75em;
+        }
+        .knowledge-tag .remove-tag { margin-left: 5px; cursor: pointer; opacity: 0.7; }
+        .knowledge-tag .remove-tag:hover { opacity: 1; }
+        .knowledge-input-row { display: flex; gap: 4px; }
+        .knowledge-input {
+            flex: 1; padding: 4px 8px;
+            border: 1px solid #444; border-radius: 4px;
+            background: #1a1a2e; color: #e0e0e0; font-size: 0.8em;
+        }
+        .knowledge-add-btn {
+            padding: 4px 10px; background: #4a4a8a;
+            border: none; border-radius: 4px;
+            color: white; cursor: pointer; font-size: 0.8em;
+        }
+        .knowledge-add-btn:hover { background: #5a5a9a; }
+        .step-instructions-input {
+            width: 100%; padding: 8px;
+            border: 1px solid #444; border-radius: 5px;
+            background: #0d1117; color: #e0e0e0;
+            resize: vertical; min-height: 50px;
+            font-family: inherit; font-size: 0.85em; margin-top: 6px;
+        }
+
+        /* Coordinate fine-tuning */
+        .coord-adjust-panel {
+            display: none;
+            background: #252542;
+            padding: 8px 12px;
+            border-radius: 5px;
+            margin-bottom: 8px;
+            border: 1px solid #ffc107;
+        }
+        .coord-adjust-panel.show { display: block; }
+        .coord-adjust-panel h5 { color: #ffc107; margin-bottom: 8px; font-size: 0.85em; }
+        .coord-adjust-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .coord-field { display: flex; align-items: center; gap: 4px; }
+        .coord-field label { color: #888; font-size: 0.8em; }
+        .coord-input {
+            width: 65px; padding: 4px 6px;
+            border: 1px solid #444; border-radius: 4px;
+            background: #0d1117; color: #e0e0e0;
+            font-family: monospace; font-size: 0.85em; text-align: center;
+        }
+        .coord-input:focus { border-color: #00d9ff; outline: none; }
+        .finetune-btn {
+            padding: 4px 10px; background: #ffc107;
+            border: none; border-radius: 4px;
+            color: #000; font-weight: bold;
+            cursor: pointer; font-size: 0.8em;
+        }
+        .finetune-btn:hover { background: #ffca28; }
+        .finetune-btn.save { background: #4caf50; color: white; }
+        .finetune-btn.save:hover { background: #66bb6a; }
+        .finetune-btn.cancel { background: #666; color: white; }
+        .finetune-btn.cancel:hover { background: #888; }
+        .image-info {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 6px; padding: 6px 10px;
+            background: #1a1a2e; border-radius: 5px; border: 1px solid #333;
+        }
+        .resolution-info { color: #00d9ff; font-size: 0.8em; font-family: monospace; }
+
+        .nav-buttons { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
+        .nav-btn {
+            padding: 6px 16px; border: 1px solid #444;
+            border-radius: 5px; background: #1a1a2e;
+            color: #e0e0e0; cursor: pointer; transition: all 0.2s;
+        }
+        .nav-btn:hover { border-color: #00d9ff; color: #00d9ff; }
+        .nav-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .step-counter { color: #888; font-size: 0.85em; display: flex; align-items: center; }
+
+        /* View mode toggle */
+        .view-toggle {
+            display: flex; gap: 4px; margin-left: 12px;
+            background: #16213e; border-radius: 4px; overflow: hidden; border: 1px solid #333;
+        }
+        .view-toggle button {
+            padding: 4px 10px; border: none; background: transparent;
+            color: #888; cursor: pointer; font-size: 0.75em; font-weight: bold; transition: all 0.2s;
+        }
+        .view-toggle button.active { background: #00d9ff; color: #000; }
+        .view-toggle button:hover:not(.active) { color: #ccc; }
+        .page-size-select {
+            padding: 4px 6px; border: 1px solid #444; border-radius: 4px;
+            background: #0d1117; color: #e0e0e0; font-size: 0.8em; margin-left: 8px;
+        }
+
+        /* Stacked single view (all steps listed) */
+        .steps-stacked {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .stacked-step-card {
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-radius: 10px;
+            overflow: hidden;
+            padding: 16px;
+            transition: border-color 0.2s;
+        }
+        .stacked-step-card:hover { border-color: #555; }
+        .stacked-step-card.active { border-color: #00d9ff; box-shadow: 0 0 10px rgba(0,217,255,0.15); }
+        .stacked-step-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 10px;
+        }
+        .stacked-step-header h4 { color: #00d9ff; margin: 0; font-size: 1em; }
+        .stacked-img-container {
+            position: relative;
+            display: inline-block;
+            background: #000;
+            border-radius: 6px;
+            overflow: hidden;
+            max-width: 100%;
+            margin-bottom: 10px;
+        }
+        .stacked-img-container img {
+            max-width: 100%;
+            max-height: 55vh;
+            display: block;
+        }
+
+        /* Grid view */
+        .steps-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(560px, 1fr));
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        .grid-card {
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-radius: 10px;
+            overflow: hidden;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .grid-card:hover { border-color: #00d9ff; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+        .grid-card.selected { border-color: #ffc107; box-shadow: 0 0 10px rgba(255,193,7,0.3); }
+        .grid-card-img {
+            position: relative;
+            background: #000;
+            width: 100%;
+            aspect-ratio: 16/9;
+            overflow: hidden;
+        }
+        .grid-card-img img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        .grid-card-img .grid-marker {
+            position: absolute;
+            width: 20px; height: 20px;
+            border: 2px solid #ff0040;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            box-shadow: 0 0 8px rgba(255,0,64,0.5);
+        }
+        .grid-card-img .grid-marker::before {
+            content: '';
+            position: absolute; top: 50%; left: 50%;
+            width: 4px; height: 4px;
+            background: #ff0040; border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+        .grid-card-img .grid-marker.drag-end { border-color: #00c8ff; box-shadow: 0 0 8px rgba(0,200,255,0.5); }
+        .grid-card-img .grid-marker.drag-end::before { background: #00c8ff; }
+        .grid-card-body { padding: 10px 14px; }
+        .grid-card-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 6px;
+        }
+        .grid-card-step {
+            color: #00d9ff; font-weight: bold; font-size: 0.95em;
+        }
+        .grid-card-action {
+            background: #252542; padding: 3px 10px; border-radius: 10px;
+            font-size: 0.82em; color: #ccc;
+        }
+        .grid-card-code {
+            background: #0d1117; padding: 5px 8px; border-radius: 4px;
+            font-family: monospace; font-size: 0.82em; color: #7ee787;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            margin-bottom: 6px;
+        }
+        .grid-card-justification {
+            color: #ffc107; font-size: 0.82em;
+            border-left: 2px solid #ffc107; padding-left: 8px;
+            max-height: 48px; overflow: hidden; text-overflow: ellipsis;
+        }
+        .grid-card-badges { display: flex; gap: 4px; margin-top: 4px; }
+        .grid-card-badges .badge {
+            font-size: 0.65em; padding: 1px 5px; border-radius: 3px; font-weight: bold;
+        }
+        .grid-card-badges .badge-adjusted { background: #ff9800; color: #000; }
+        .grid-card-badges .badge-deleted { background: #f44336; color: #fff; }
+        .grid-page-nav {
+            display: flex; align-items: center; justify-content: center;
+            gap: 8px; margin-bottom: 12px;
+        }
+        .grid-page-btn {
+            padding: 6px 16px; border: 1px solid #444;
+            border-radius: 5px; background: #1a1a2e;
+            color: #e0e0e0; cursor: pointer; transition: all 0.2s; font-size: 0.85em;
+        }
+        .grid-page-btn:hover { border-color: #00d9ff; color: #00d9ff; }
+        .grid-page-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .grid-page-info { color: #888; font-size: 0.85em; }
+
+        /* Detail overlay for grid view */
+        .detail-overlay {
+            display: none;
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15,15,26,0.92);
+            z-index: 500;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        .detail-overlay.show { display: block; }
+        .detail-overlay-content {
+            max-width: 1100px; margin: 0 auto;
+            background: #1a1a2e; border-radius: 10px;
+            border: 1px solid #333; overflow: hidden;
+        }
+        .detail-overlay-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 10px 16px; background: #16213e; border-bottom: 1px solid #333;
+        }
+        .detail-overlay-header h3 { color: #00d9ff; font-size: 1em; }
+        .detail-overlay-close {
+            padding: 4px 12px; background: #444; border: none; border-radius: 4px;
+            color: #e0e0e0; cursor: pointer; font-size: 0.85em;
+        }
+        .detail-overlay-close:hover { background: #666; }
+        .detail-overlay-body { padding: 16px; }
+
+        .loading-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15, 15, 26, 0.92);
+            display: flex; justify-content: center; align-items: center;
+            z-index: 1000; color: #00d9ff;
+        }
+        .loading-card {
+            text-align: center; max-width: 420px; width: 90%;
+        }
+        .loading-card .load-title {
+            font-size: 1.1em; margin-bottom: 14px; font-weight: 600;
+        }
+        .loading-card .load-bar-track {
+            background: #252542; border-radius: 6px; height: 8px; overflow: hidden; margin-bottom: 8px;
+        }
+        .loading-card .load-bar-fill {
+            height: 100%; background: linear-gradient(90deg, #00d9ff, #7c4dff); border-radius: 6px;
+            transition: width 0.3s; width: 0%;
+        }
+        .loading-card .load-status {
+            color: #888; font-size: 0.82em;
+        }
+        @keyframes loadPulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
+
+        .panel-review { display: block; }
+        .panel-annotation { display: none; }
+        body.annotation-mode .panel-review { display: none; }
+        body.annotation-mode .panel-annotation { display: block; }
+
+        /* Human-provided data highlight */
+        .human-data-section {
+            background: linear-gradient(135deg, #1a2e2a 0%, #16213e 100%);
+            padding: 10px 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            border: 1px solid #00897b;
+        }
+        .human-data-section h4 { color: #4db6ac; margin-bottom: 8px; font-size: 0.9em; }
+        .human-data-section .data-field { margin-bottom: 6px; }
+        .human-data-section .data-label { color: #888; font-size: 0.78em; display: block; margin-bottom: 2px; }
+        .human-data-section .data-value {
+            color: #e0e0e0; font-size: 0.85em;
+            background: #0d1117; padding: 6px 8px; border-radius: 4px;
+            white-space: pre-wrap; line-height: 1.4;
+        }
+        .human-data-section .kp-tag {
+            display: inline-block; background: #00897b; color: white;
+            padding: 2px 8px; border-radius: 10px;
+            font-size: 0.78em; margin: 2px;
+        }
+
+        /* Editable justification */
+        .justification-edit-area {
+            margin-top: 6px;
+            padding-top: 6px;
+            border-top: 1px solid #333;
+        }
+        .justification-input {
+            width: 100%; padding: 6px 8px;
+            border: 1px solid #444; border-radius: 4px;
+            background: #0d1117; color: #ffc107;
+            resize: vertical; min-height: 40px;
+            font-family: inherit; font-size: 0.85em;
+            border-left: 3px solid #ffc107;
+        }
+        .justification-input:focus { border-color: #00d9ff; outline: none; }
+
+        /* Editable query */
+        .query-edit-input {
+            padding: 6px 10px;
+            border: 1px solid #444; border-radius: 4px;
+            background: #0d1117; color: #ffc107;
+            font-family: inherit; font-size: 0.9em;
+            resize: vertical; min-height: 60px; width: 100%;
+        }
+        .query-edit-input:focus { border-color: #00d9ff; outline: none; }
+        .info-item-query { flex: 2; min-width: 400px; }
+
+        /* Delete step button */
+        .delete-step-btn {
+            padding: 2px 10px;
+            background: transparent;
+            border: 1px solid #f4433688;
+            border-radius: 4px;
+            color: #f44336;
+            cursor: pointer;
+            font-size: 0.7em;
+            font-weight: bold;
+            margin-left: 8px;
+            transition: all 0.2s;
+        }
+        .delete-step-btn:hover { background: #f44336; color: #fff; }
+
+        /* Export button */
+        .export-case-btn {
+            padding: 5px 14px;
+            background: linear-gradient(135deg, #4caf50, #2e7d32);
+            border: none; border-radius: 5px;
+            color: white; cursor: pointer;
+            font-weight: bold; font-size: 0.8em;
+            transition: all 0.2s;
+        }
+        .export-case-btn:hover { transform: translateY(-1px); box-shadow: 0 3px 10px rgba(76,175,80,0.3); }
+
+        /* Step error marks */
+        .btn-mark-error {
+            padding: 3px 10px;
+            border: 1px solid #f44336;
+            border-radius: 4px;
+            background: transparent;
+            color: #f44336;
+            cursor: pointer;
+            font-size: 0.75em;
+            font-weight: bold;
+            transition: all 0.2s;
+            margin-left: 8px;
+        }
+        .btn-mark-error:hover { background: #f44336; color: #fff; }
+        .btn-mark-error.marked {
+            background: #f44336;
+            color: #fff;
+        }
+        .btn-mark-error.marked:hover {
+            background: transparent;
+            color: #f44336;
+        }
+        .step-error-banner {
+            background: linear-gradient(135deg, #f4433620, #ff980020);
+            border: 1px solid #f44336;
+            border-radius: 6px;
+            padding: 8px 12px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .step-error-banner .error-icon {
+            color: #f44336;
+            font-size: 1.2em;
+            flex-shrink: 0;
+        }
+        .step-error-banner .error-text {
+            color: #ffab91;
+            font-size: 0.85em;
+        }
+        .step-error-note-input {
+            width: 100%;
+            background: #1a1a2e;
+            border: 1px solid #f4433660;
+            border-radius: 4px;
+            color: #ffab91;
+            font-size: 0.8em;
+            padding: 4px 8px;
+            margin-top: 4px;
+        }
+        .step-error-note-input:focus {
+            outline: none;
+            border-color: #f44336;
+        }
+        .review-progress-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 10px;
+            background: #16213e;
+            border-radius: 4px;
+            font-size: 0.8em;
+        }
+        .review-progress-bar .progress-text {
+            color: #888;
+            white-space: nowrap;
+        }
+        .review-progress-bar .progress-text b {
+            color: #f44336;
+        }
+        .review-progress-bar .progress-track {
+            flex: 1;
+            height: 4px;
+            background: #333;
+            border-radius: 2px;
+            min-width: 60px;
+        }
+        .review-progress-bar .progress-fill {
+            height: 100%;
+            background: #4caf50;
+            border-radius: 2px;
+            transition: width 0.3s;
+        }
+        .stacked-step-card.has-error {
+            border-left: 3px solid #f44336 !important;
+        }
+        .step-item.has-error {
+            border-left: 3px solid #f44336;
+        }
+
+        /* Frame adjustment */
+        .frame-adjust-controls {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 0;
+            margin-top: 2px;
+        }
+        .frame-btn {
+            padding: 2px 8px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background: #1a1a2e;
+            color: #00d9ff;
+            cursor: pointer;
+            font-size: 0.75em;
+            transition: all 0.2s;
+        }
+        .frame-btn:hover { background: #00d9ff; color: #000; }
+        .frame-time {
+            color: #888;
+            font-size: 0.72em;
+            min-width: 70px;
+            text-align: center;
+            font-family: monospace;
+        }
+
+        /* Version grouping in sidebar */
+        .version-toggle {
+            padding: 2px 12px 2px 28px;
+            color: #666;
+            font-size: 0.7em;
+            cursor: pointer;
+            user-select: none;
+        }
+        .version-toggle:hover { color: #00d9ff; }
+        .rec-item.older-version {
+            opacity: 0.55;
+            font-size: 0.85em;
+            border-left: 2px solid #333;
+            margin-left: 8px;
+        }
+
+        /* AI Check */
+        .btn-ai-check {
+            padding: 5px 14px;
+            border: 1px solid #9c27b0;
+            border-radius: 4px;
+            background: transparent;
+            color: #ce93d8;
+            cursor: pointer;
+            font-size: 0.8em;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        .btn-ai-check:hover { background: #9c27b0; color: #fff; }
+        .btn-ai-check.running {
+            background: #9c27b0; color: #fff;
+            animation: aipulse 1.5s infinite;
+            cursor: wait;
+        }
+        @keyframes aipulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+        .ai-progress-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.65);
+            z-index: 10000;
+            justify-content: center;
+            align-items: center;
+        }
+        .ai-progress-overlay.show {
+            display: flex;
+        }
+        .ai-progress-card {
+            background: #1a1a2e;
+            border: 1px solid #9c27b0;
+            border-radius: 16px;
+            padding: 36px 48px;
+            min-width: 420px;
+            text-align: center;
+            box-shadow: 0 0 40px rgba(156,39,176,0.3);
+        }
+        .ai-progress-title {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #ce93d8;
+            margin-bottom: 8px;
+        }
+        .ai-progress-subtitle {
+            font-size: 0.85em;
+            color: #888;
+            margin-bottom: 20px;
+        }
+        .ai-progress-bar-track {
+            height: 12px;
+            background: #2a2a3e;
+            border-radius: 6px;
+            overflow: hidden;
+            position: relative;
+            margin-bottom: 14px;
+        }
+        .ai-progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #7b1fa2, #ce93d8, #9c27b0);
+            background-size: 200% 100%;
+            animation: aiBarShimmer 2s linear infinite;
+            transition: width 0.5s ease;
+            border-radius: 6px;
+            min-width: 2%;
+        }
+        @keyframes aiBarShimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+        .ai-progress-stats {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85em;
+            color: #aaa;
+            margin-bottom: 6px;
+        }
+        .ai-progress-pct {
+            font-size: 2.2em;
+            font-weight: bold;
+            color: #e1bee7;
+            margin-bottom: 4px;
+        }
+        .ai-progress-eta {
+            font-size: 0.8em;
+            color: #777;
+            margin-top: 2px;
+        }
+        .ai-progress-issues {
+            margin-top: 14px;
+            padding-top: 12px;
+            border-top: 1px solid #333;
+            font-size: 0.82em;
+            color: #888;
+        }
+        .ai-progress-issues span.issue-count {
+            color: #f44336;
+            font-weight: bold;
+        }
+        .ai-progress-issues span.ok-count {
+            color: #4caf50;
+            font-weight: bold;
+        }
+        .ai-progress-spinner {
+            display: inline-block;
+            width: 18px; height: 18px;
+            border: 2px solid #555;
+            border-top-color: #ce93d8;
+            border-radius: 50%;
+            animation: aispin 0.8s linear infinite;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+        @keyframes aispin {
+            to { transform: rotate(360deg); }
+        }
+        .ai-result {
+            margin-top: 6px;
+            padding: 8px 10px;
+            background: #151530;
+            border-radius: 5px;
+            border: 1px solid #333;
+        }
+        .ai-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; align-items: center; }
+        .ai-badge {
+            padding: 2px 8px; border-radius: 10px;
+            font-size: 0.7em; font-weight: bold;
+            display: inline-block;
+        }
+        .ai-badge.ai-correct { background: rgba(76,175,80,0.2); color: #4caf50; }
+        .ai-badge.ai-wrong { background: rgba(244,67,54,0.25); color: #f44336; }
+        .ai-badge.ai-redundant { background: rgba(255,152,0,0.2); color: #ff9800; }
+        .ai-badge.ai-suspicious { background: rgba(255,193,7,0.2); color: #ffc107; }
+        .ai-badge.ai-unknown { background: rgba(150,150,150,0.15); color: #888; }
+        .ai-badge.ai-good { background: rgba(76,175,80,0.15); color: #81c784; }
+        .ai-badge.ai-acceptable { background: rgba(0,217,255,0.12); color: #4dd0e1; }
+        .ai-badge.ai-poor { background: rgba(244,67,54,0.15); color: #ef9a9a; }
+        .ai-badge.ai-missing { background: rgba(244,67,54,0.2); color: #f44336; }
+        .ai-flag {
+            padding: 1px 6px; border-radius: 8px;
+            font-size: 0.65em; font-weight: bold;
+            background: rgba(156,39,176,0.2); color: #ce93d8;
+        }
+        .ai-reason {
+            color: #bbb; font-size: 0.78em; margin-bottom: 4px;
+            padding-left: 8px; border-left: 2px solid #444;
+        }
+        .ai-reasoning {
+            color: #90caf9; font-size: 0.78em; margin-bottom: 6px;
+            padding: 6px 8px; background: #0d1530; border-radius: 4px;
+            border-left: 2px solid #42a5f5; line-height: 1.5;
+        }
+        .ai-issues {
+            font-size: 0.75em; color: #ef9a9a; margin-bottom: 4px;
+        }
+        .ai-issue { margin-bottom: 2px; }
+        .ai-rewrite {
+            background: #1a2e1a; border: 1px solid #2e7d32;
+            border-radius: 4px; padding: 6px 8px; margin-top: 4px;
+        }
+        .ai-rewrite label {
+            color: #66bb6a; font-size: 0.72em; font-weight: bold;
+            display: block; margin-bottom: 3px;
+        }
+        .ai-rewrite-text {
+            color: #a5d6a7; font-size: 0.82em; line-height: 1.4;
+            margin-bottom: 4px;
+        }
+        .ai-apply-btn {
+            padding: 2px 10px; background: #2e7d32; color: #fff;
+            border: none; border-radius: 3px; cursor: pointer;
+            font-size: 0.72em; font-weight: bold;
+        }
+        .ai-apply-btn:hover { background: #4caf50; }
+        /* Grid card AI indicators */
+        .grid-card.ai-wrong { border-color: #f44336; }
+        .grid-card.ai-redundant { border-color: #ff9800; }
+        .grid-card.ai-suspicious { border-color: #ffc107; }
+        .grid-card.ai-correct { border-color: #333; }
+        .grid-card.has-error { border-color: #f44336; box-shadow: 0 0 8px rgba(244,67,54,0.3); }
+
+        /* Reset button */
+        .btn-reset {
+            padding: 5px 14px;
+            border: 1px solid #ff980088;
+            border-radius: 4px;
+            background: transparent;
+            color: #ff9800;
+            cursor: pointer;
+            font-size: 0.8em;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        .btn-reset:hover { background: #ff9800; color: #000; }
+        .btn-reset.confirming { background: #f44336; color: #fff; border-color: #f44336; }
+    </style>
+</head>
+<body>
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-card">
+            <div class="load-title" id="loadTitle">Loading recording data...</div>
+            <div class="load-bar-track"><div class="load-bar-fill" id="loadBar" style="animation:loadPulse 1.5s infinite;width:5%"></div></div>
+            <div class="load-status" id="loadStatus">Connecting...</div>
+        </div>
+    </div>
+
+    <div class="header">
+        <h1>OSS Review</h1>
+        <div class="header-info">
+            <span>Task: <b id="taskName"></b></span>
+            <span>Status: <b id="reviewStatus">-</b></span>
+        </div>
+        <div class="mode-toggle">
+            <button id="modeReview" class="active" onclick="setMode('review')">Review</button>
+            <button id="modeAnnotation" onclick="setMode('annotation')">Annotate</button>
+        </div>
+        <div id="reviewProgressContainer" class="review-progress-bar" style="display:none;">
+            <span class="progress-text" id="reviewProgressText">Errors: <b>0</b> / Reviewed: 0</span>
+            <div class="progress-track"><div class="progress-fill" id="reviewProgressFill" style="width:0%"></div></div>
+        </div>
+        <div id="aiCheckContainer" style="display:flex;align-items:center;gap:6px;">
+            <button class="btn-ai-check" id="aiCheckBtn" onclick="startAiCheck()">AI Check</button>
+            <span id="aiCheckStatus" style="font-size:0.75em;color:#888;"></span>
+        </div>
+        <button class="btn-reset" onclick="confirmResetCase()">Reset to Original</button>
+        <a class="btn-back" href="/dashboard" id="backLink">Dashboard</a>
+    </div>
+
+    <div class="main-layout">
+        <!-- Recording sidebar -->
+        <div class="rec-sidebar" id="recSidebar">
+            <div class="rec-sidebar-header">
+                <h3>Recordings</h3>
+                <span class="rec-count" id="recCount">0</span>
+            </div>
+            <div class="rec-filter">
+                <input type="text" id="recFilterInput" placeholder="Filter..." oninput="filterRecordings()" />
+            </div>
+            <div class="rec-list" id="recList">
+                <div style="padding:20px;color:#666;text-align:center;font-size:0.85em;">Loading...</div>
+            </div>
+        </div>
+
+        <!-- Step sidebar -->
+        <div class="step-sidebar" id="stepSidebar">
+            <div class="step-sidebar-header">Steps</div>
+        </div>
+
+        <!-- Content -->
+        <div class="content-area" id="contentArea">
+            <div class="annotator-info-bar" id="annotatorInfo"></div>
+            <div id="humanDataSection"></div>
+
+            <div class="nav-buttons">
+                <button class="nav-btn" id="prevBtn" onclick="prevStep()" style="display:none;">Prev</button>
+                <span class="step-counter" id="stepCounter">Step 0 / 0</span>
+                <button class="nav-btn" id="nextBtn" onclick="nextStep()" style="display:none;">Next</button>
+                <div class="view-toggle">
+                    <button id="viewSingle" class="active" onclick="setViewMode('single')">Single</button>
+                    <button id="viewGrid" onclick="setViewMode('grid')">Grid</button>
+                </div>
+                <select class="page-size-select" id="pageSizeSelect" onchange="changePageSize()" title="Steps per page in grid view">
+                    <option value="10">10/page</option>
+                    <option value="20">20/page</option>
+                    <option value="30" selected>30/page</option>
+                    <option value="50">50/page</option>
+                    <option value="100">100/page</option>
+                </select>
+            </div>
+
+            <!-- Single step view (all steps stacked) -->
+            <div id="singleStepView">
+                <div class="steps-stacked" id="stepsStacked"></div>
+            </div>
+
+            <!-- Grid view (all steps) -->
+            <div id="gridStepView" style="display:none;">
+                <div class="grid-page-nav" id="gridPageNav"></div>
+                <div class="steps-grid" id="stepsGrid"></div>
+                <div class="grid-page-nav" id="gridPageNavBottom"></div>
+            </div>
+
+            <div class="panel-review">
+                <div class="review-panel">
+                    <h4>Review Decision</h4>
+                    <div class="review-buttons">
+                        <button class="review-btn reviewed" id="btnReviewed" onclick="setReview('reviewed')">Reviewed (Pass)</button>
+                        <button class="review-btn rejected" id="btnRejected" onclick="setReview('rejected')">Rejected</button>
+                        <button class="review-btn unreviewed" id="btnUnreviewed" onclick="setReview('unreviewed')">Reset to Unreviewed</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel-annotation">
+                <div class="annotation-panel" id="verdictPanel"></div>
+                <div id="evaluationPanel"></div>
+                <div id="knowledgePanel"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Check progress overlay -->
+    <div class="ai-progress-overlay" id="aiProgressOverlay">
+        <div class="ai-progress-card">
+            <div class="ai-progress-title"><span class="ai-progress-spinner"></span>AI Quality Check Running</div>
+            <div class="ai-progress-subtitle" id="aiProgressSubtitle">Analyzing steps with Gemini...</div>
+            <div class="ai-progress-pct" id="aiProgressPct">0%</div>
+            <div class="ai-progress-bar-track">
+                <div class="ai-progress-bar-fill" id="aiProgressFill" style="width:0%"></div>
+            </div>
+            <div class="ai-progress-stats">
+                <span id="aiProgressSteps">Step 0 / 0</span>
+                <span id="aiProgressEta">Estimating...</span>
+            </div>
+            <div class="ai-progress-issues" id="aiProgressIssues"></div>
+        </div>
+    </div>
+
+    <!-- Detail overlay for grid card click -->
+    <div class="detail-overlay" id="detailOverlay">
+        <div class="detail-overlay-content">
+            <div class="detail-overlay-header">
+                <h3 id="detailOverlayTitle">Step Detail</h3>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <button class="grid-page-btn" onclick="detailPrev()" id="detailPrevBtn">Prev</button>
+                    <button class="grid-page-btn" onclick="detailNext()" id="detailNextBtn">Next</button>
+                    <button class="detail-overlay-close" onclick="closeDetail()">Close (Esc)</button>
+                </div>
+            </div>
+            <div class="detail-overlay-body" id="detailOverlayBody"></div>
+        </div>
+    </div>
+
+    <script>
+        let folderName = '{{ folder_name }}';
+        const ossFolder = new URLSearchParams(window.location.search).get('folder') || 'recordings_0303';
+        const directMode = new URLSearchParams(window.location.search).get('direct') === '1';
+        const pageMode = '{{ page_mode | default("reviewer") }}';  // 'reviewer' or 'annotator'
+        const isAnnotatorMode = pageMode === 'annotator';
+        let taskData = null;
+        let currentStep = 0;
+        let reviewStatus = 'unreviewed';
+        let currentMode = 'review';
+        let annotation = {};
+        let coordAdjustments = {};
+        let stepErrors = {};  // {origIdx: {note: '...'}} - reviewer-marked errors
+        let annotatorStatus = 'not_started';
+        let finetuneActive = false;
+        let allRecordings = [];
+        let filteredRecordings = [];
+        let viewMode = 'single'; // 'single' or 'grid'
+        let gridPage = 0;
+        let gridPageSize = 30;
+        let detailStepIdx = -1;
+
+        document.getElementById('backLink').href = '/dashboard';
+
+        // If direct access mode, hide recording sidebar and AI check
+        if (directMode) {
+            const recSidebar = document.getElementById('recSidebar');
+            if (recSidebar) recSidebar.style.display = 'none';
+            const aiContainer = document.getElementById('aiCheckContainer');
+            if (aiContainer) aiContainer.style.display = 'none';
+        }
+
+        // Annotator mode: hide AI check, mode toggle, reset button; change header
+        if (isAnnotatorMode) {
+            // Annotators CAN use AI check (kept visible)
+            document.querySelector('.mode-toggle').style.display = 'none';
+            document.querySelector('.btn-reset').style.display = 'none';
+            document.querySelector('.header h1').textContent = 'Annotator Review';
+            document.querySelector('.header h1').style.color = '#ff9800';
+            // Hide review decision panel for annotator
+            document.querySelector('.panel-review').style.display = 'none';
+            // Back link goes to annotator dashboard, NOT reviewer dashboard
+            const backLink = document.getElementById('backLink');
+            backLink.textContent = 'My Tasks';
+            backLink.href = '/annotator_dashboard?folder=' + encodeURIComponent(ossFolder);
+        }
+
+        // ========== Recording sidebar ==========
+
+        async function loadRecordingSidebar() {
+            try {
+                const resp = await fetch('/api/oss/folder_recordings?folder=' + encodeURIComponent(ossFolder));
+                const data = await resp.json();
+                allRecordings = data.recordings || [];
+                filteredRecordings = allRecordings;
+                document.getElementById('recCount').textContent = allRecordings.length;
+                renderRecordingSidebar();
+            } catch (err) {
+                document.getElementById('recList').innerHTML = '<div style="padding:10px;color:#f44336;font-size:0.8em;">Failed to load</div>';
+            }
+        }
+
+        // Track which person groups are expanded
+        let expandedPersons = {};
+        let expandedVersionGroups = {};
+
+        function getTaskBase(taskId) {
+            const match = taskId.match(/^(.+)_(\d{3})$/);
+            if (match) return { base: match[1], version: parseInt(match[2]) };
+            return { base: taskId, version: -1 };
+        }
+
+        function toggleVersionGroup(baseKey) {
+            expandedVersionGroups[baseKey] = !expandedVersionGroups[baseKey];
+            renderRecordingSidebar();
+        }
+
+        function hashColor(str) {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+            return 'hsl(' + (Math.abs(hash) % 360) + ', 55%, 42%)';
+        }
+
+        function renderRecordingSidebar() {
+            const list = document.getElementById('recList');
+            if (filteredRecordings.length === 0) {
+                list.innerHTML = '<div style="padding:20px;color:#666;text-align:center;font-size:0.8em;">No recordings</div>';
+                return;
+            }
+
+            // Group by username
+            const groups = {};
+            filteredRecordings.forEach(rec => {
+                const user = rec.username || 'Unknown';
+                if (!groups[user]) groups[user] = [];
+                groups[user].push(rec);
+            });
+
+            // Auto-expand the group containing current recording
+            const currentUser = filteredRecordings.find(r => r.folder_name === folderName);
+            if (currentUser) {
+                const uname = currentUser.username || 'Unknown';
+                if (expandedPersons[uname] === undefined) expandedPersons[uname] = true;
+            }
+
+            const sortedUsers = Object.keys(groups).sort();
+            let html = '';
+            sortedUsers.forEach(user => {
+                const recs = groups[user];
+                const rev = recs.filter(r => r.review_status === 'reviewed').length;
+                const rej = recs.filter(r => r.review_status === 'rejected').length;
+                const isExpanded = !!expandedPersons[user];
+                const color = hashColor(user);
+                const letter = user.charAt(0).toUpperCase();
+                const safeUser = user.replace(/'/g, "\\\\'");
+
+                html += '<div class="person-group">';
+                html += '<div class="person-header" onclick="togglePerson(\\'' + safeUser + '\\')">';
+                html += '<span class="person-toggle' + (isExpanded ? ' expanded' : '') + '" id="ptoggle-' + user + '">&#9654;</span>';
+                html += '<span class="person-avatar" style="background:' + color + '">' + letter + '</span>';
+                html += '<span class="person-name">' + user + '</span>';
+                html += '<span class="person-stats">';
+                if (rev > 0) html += '<span class="person-stat rev">' + rev + '</span>';
+                if (rej > 0) html += '<span class="person-stat rej">' + rej + '</span>';
+                html += '<span class="person-stat total">' + recs.length + '</span>';
+                html += '</span></div>';
+
+                html += '<div class="person-tasks' + (isExpanded ? ' expanded' : '') + '" id="ptasks-' + user + '">';
+
+                // Group by task base name for versioning
+                const versionGroups = {};
+                recs.forEach(rec => {
+                    const tid = rec.task_name || rec.task_id || rec.folder_name;
+                    const parsed = getTaskBase(tid);
+                    if (!versionGroups[parsed.base]) versionGroups[parsed.base] = [];
+                    versionGroups[parsed.base].push({ rec: rec, version: parsed.version });
+                });
+
+                Object.keys(versionGroups).sort().forEach(base => {
+                    const versions = versionGroups[base];
+                    versions.sort((a, b) => b.version - a.version); // newest first
+                    const newest = versions[0];
+                    const hasOlder = versions.length > 1;
+
+                    // Render newest version
+                    const nRec = newest.rec;
+                    const nIsActive = nRec.folder_name === folderName;
+                    const nStatus = nRec.review_status || 'unreviewed';
+                    const nStatusLabel = nStatus.charAt(0).toUpperCase() + nStatus.slice(1);
+                    const nTitle = nRec.task_name || nRec.task_id || nRec.folder_name.substring(0, 30);
+                    html += '<div class="rec-item ' + nStatus + (nIsActive ? ' active' : '') + '" ' +
+                        'onclick="switchRecording(\\'' + nRec.folder_name.replace(/'/g, "\\\\'") + '\\')">' +
+                        '<div class="rec-title" title="' + nRec.folder_name + '">' + nTitle + '</div>' +
+                        '<span class="rec-status ' + nStatus + '">' + nStatusLabel + '</span>' +
+                        '</div>';
+
+                    // Older versions toggle
+                    if (hasOlder) {
+                        const safeBase = base.replace(/'/g, "\\\\'");
+                        const vExpanded = !!expandedVersionGroups[base];
+                        html += '<div class="version-toggle" onclick="event.stopPropagation();toggleVersionGroup(\\'' + safeBase + '\\')">';
+                        html += (vExpanded ? '&#9660; ' : '&#9654; ') + (versions.length - 1) + ' older version(s)';
+                        html += '</div>';
+                        if (vExpanded) {
+                            versions.slice(1).forEach(v => {
+                                const oRec = v.rec;
+                                const oIsActive = oRec.folder_name === folderName;
+                                const oStatus = oRec.review_status || 'unreviewed';
+                                const oStatusLabel = oStatus.charAt(0).toUpperCase() + oStatus.slice(1);
+                                const oTitle = oRec.task_name || oRec.task_id || oRec.folder_name.substring(0, 30);
+                                html += '<div class="rec-item older-version ' + oStatus + (oIsActive ? ' active' : '') + '" ' +
+                                    'onclick="switchRecording(\\'' + oRec.folder_name.replace(/'/g, "\\\\'") + '\\')">' +
+                                    '<div class="rec-title" title="' + oRec.folder_name + '">' + oTitle + '</div>' +
+                                    '<span class="rec-status ' + oStatus + '">' + oStatusLabel + '</span>' +
+                                    '</div>';
+                            });
+                        }
+                    }
+                });
+                html += '</div></div>';
+            });
+
+            list.innerHTML = html;
+
+            // Scroll active item into view
+            setTimeout(() => {
+                const active = list.querySelector('.rec-item.active');
+                if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }, 100);
+        }
+
+        function togglePerson(user) {
+            expandedPersons[user] = !expandedPersons[user];
+            const tasks = document.getElementById('ptasks-' + user);
+            const toggle = document.getElementById('ptoggle-' + user);
+            if (tasks) tasks.classList.toggle('expanded');
+            if (toggle) toggle.classList.toggle('expanded');
+        }
+
+        function filterRecordings() {
+            const q = document.getElementById('recFilterInput').value.toLowerCase();
+            if (!q) {
+                filteredRecordings = allRecordings;
+            } else {
+                filteredRecordings = allRecordings.filter(r =>
+                    (r.folder_name || '').toLowerCase().includes(q) ||
+                    (r.task_id || '').toLowerCase().includes(q) ||
+                    (r.username || '').toLowerCase().includes(q) ||
+                    (r.query || '').toLowerCase().includes(q)
+                );
+            }
+            renderRecordingSidebar();
+        }
+
+        function switchRecording(newFolderName) {
+            if (newFolderName === folderName) return;
+            folderName = newFolderName;
+            // Update URL without reload
+            const baseRoute = isAnnotatorMode ? '/annotator/' : '/oss_review/';
+            const url = baseRoute + encodeURIComponent(folderName) + '?folder=' + encodeURIComponent(ossFolder);
+            history.pushState(null, '', url);
+            document.title = (isAnnotatorMode ? 'Annotator Review - ' : 'OSS Review - ') + folderName;
+            // Reset and reload
+            taskData = null;
+            currentStep = 0;
+            finetuneActive = false;
+            annotation = {};
+            coordAdjustments = {};
+            stepErrors = {};
+            annotatorStatus = 'not_started';
+            // Reset AI check state
+            if (aiCheckPolling) { clearInterval(aiCheckPolling); aiCheckPolling = null; }
+            aiCheckResults = null;
+            aiCheckStartTime = null;
+            showAiProgress(false);
+            const aiBtn = document.getElementById('aiCheckBtn');
+            aiBtn.classList.remove('running');
+            aiBtn.textContent = 'AI Check';
+            document.getElementById('aiCheckStatus').textContent = '';
+            document.getElementById('aiCheckStatus').style.color = '#888';
+            document.getElementById('loadingOverlay').style.display = 'flex';
+            setLoadProgress(10, 'Switching recording...');
+            loadTask();
+            renderRecordingSidebar();
+        }
+
+        function setLoadProgress(pct, msg) {
+            var bar = document.getElementById('loadBar');
+            var status = document.getElementById('loadStatus');
+            if (bar) { bar.style.width = pct + '%'; bar.style.animation = pct >= 100 ? 'none' : 'loadPulse 1.5s infinite'; }
+            if (status) status.textContent = msg || '';
+        }
+
+        // ========== Mode toggle ==========
+
+        function setMode(mode) {
+            currentMode = mode;
+            document.body.classList.toggle('annotation-mode', mode === 'annotation');
+            document.getElementById('modeReview').classList.toggle('active', mode === 'review');
+            document.getElementById('modeAnnotation').classList.toggle('active', mode === 'annotation');
+            if (taskData) renderAnnotationPanels();
+        }
+
+        // ========== Load task ==========
+
+        async function loadTask() {
+            try {
+                setLoadProgress(15, 'Fetching recording data from server...');
+                const resp = await fetch('/api/oss/task/' + encodeURIComponent(folderName) + '?folder=' + encodeURIComponent(ossFolder));
+                setLoadProgress(50, 'Parsing response...');
+                taskData = await resp.json();
+
+                if (taskData.error) {
+                    document.getElementById('contentArea').innerHTML =
+                        '<div style="padding:40px;color:#f44336;">' + taskData.error + '</div>';
+                    document.getElementById('loadingOverlay').style.display = 'none';
+                    return;
+                }
+                setLoadProgress(65, 'Loading ' + (taskData.steps || []).length + ' steps...');
+
+                annotation = taskData.annotation || {};
+                coordAdjustments = taskData.coord_adjustments || {};
+                stepErrors = taskData.step_errors || {};
+                annotatorStatus = taskData.annotator_status || 'not_started';
+                // Load AI check results if available
+                if (annotation.ai_check_results && annotation.ai_check_results.status === 'completed') {
+                    aiCheckResults = annotation.ai_check_results;
+                    onAiCheckComplete();
+                }
+
+                // Pre-populate annotation fields from annotator data if annotation is empty
+                const info = taskData.annotator_info || {};
+                if (!annotation.step_by_step_instructions && info.step_by_step_instruction) {
+                    annotation.step_by_step_instructions = info.step_by_step_instruction;
+                }
+                const humanKP = taskData.knowledge_points || [];
+                if (humanKP.length > 0 && (!annotation.custom_nodes || annotation.custom_nodes.length === 0)) {
+                    annotation.custom_nodes = [...humanKP];
+                }
+
+                document.getElementById('taskName').textContent = taskData.task_name || folderName;
+
+                // Annotator info bar with editable query
+                let infoHtml = '';
+                if (info.username) infoHtml += '<div class="info-item"><span>Annotator:</span> <b>' + info.username + '</b></div>';
+                if (info.task_id) infoHtml += '<div class="info-item"><span>Task:</span> <b>' + info.task_id + '</b></div>';
+                infoHtml += '<div class="info-item info-item-query"><span>Query:</span> ' +
+                    '<textarea class="query-edit-input" id="query-edit" onchange="saveQuery(this.value)" placeholder="Enter query...">' +
+                    (info.query || '') + '</textarea></div>';
+                infoHtml += '<div class="info-item"><button class="export-case-btn" onclick="exportCase()">Export Case</button></div>';
+                // Annotator status
+                if (isAnnotatorMode) {
+                    infoHtml += '<div class="info-item" style="display:flex;gap:6px;align-items:center;"><span style="color:#888;font-size:0.8em;">Status:</span>';
+                    infoHtml += '<button id="annBtnIP" style="padding:3px 10px;border:1px solid #ff9800;border-radius:4px;background:' + (annotatorStatus==='in_progress'?'#ff9800':'transparent') + ';color:' + (annotatorStatus==='in_progress'?'#000':'#ff9800') + ';cursor:pointer;font-size:0.78em;font-weight:bold;" onclick="setAnnotatorStatus(&quot;in_progress&quot;)">In Progress</button>';
+                    infoHtml += '<button id="annBtnDone" style="padding:3px 10px;border:1px solid #4caf50;border-radius:4px;background:' + (annotatorStatus==='completed'?'#4caf50':'transparent') + ';color:' + (annotatorStatus==='completed'?'#fff':'#4caf50') + ';cursor:pointer;font-size:0.78em;font-weight:bold;" onclick="setAnnotatorStatus(&quot;completed&quot;)">Completed</button></div>';
+                } else {
+                    var _asc = {not_started:'#888',in_progress:'#ff9800',completed:'#4caf50'};
+                    var _asl = {not_started:'Not Started',in_progress:'In Progress',completed:'Completed'};
+                    infoHtml += '<div class="info-item"><span style="color:#888;font-size:0.8em;">Annotator:</span> <b style="color:' + (_asc[annotatorStatus]||'#888') + ';font-size:0.85em;">' + (_asl[annotatorStatus]||'Not Started') + '</b></div>';
+                }
+                // Show error count for annotator
+                const errorCount = Object.keys(stepErrors).length;
+                if (isAnnotatorMode && errorCount > 0) {
+                    infoHtml += '<div class="info-item" style="color:#f44336;font-weight:bold;">&#9888; ' + errorCount + ' step(s) marked as errors by reviewer</div>';
+                }
+                // Deleted steps restore
+                if (taskData.deleted_step_count > 0) {
+                    infoHtml += '<div class="info-item" style="color:#ff9800;font-size:0.85em;">' + taskData.deleted_step_count + ' deleted step(s) <button style="padding:2px 8px;border:1px solid #ff9800;border-radius:3px;background:transparent;color:#ff9800;cursor:pointer;font-size:0.8em;" onclick="restoreDeletedSteps()">Restore All</button></div>';
+                }
+                document.getElementById('annotatorInfo').innerHTML = infoHtml || '<div class="info-item"><span>No annotator info</span></div>';
+
+                // Human-provided data section
+                let hdHtml = '';
+                if (info.step_by_step_instruction || humanKP.length > 0) {
+                    hdHtml = '<div class="human-data-section"><h4>Human-Provided Data</h4>';
+                    if (info.step_by_step_instruction) {
+                        hdHtml += '<div class="data-field"><span class="data-label">Step-by-Step Instruction (from annotator)</span>' +
+                            '<div class="data-value">' + info.step_by_step_instruction.replace(/\\\\n/g, '\\n').replace(/\\n/g, '<br>') + '</div></div>';
+                    }
+                    if (humanKP.length > 0) {
+                        hdHtml += '<div class="data-field"><span class="data-label">Knowledge Points (from annotator)</span><div>';
+                        humanKP.forEach(kp => { hdHtml += '<span class="kp-tag">' + kp + '</span>'; });
+                        hdHtml += '</div></div>';
+                    }
+                    hdHtml += '</div>';
+                }
+                document.getElementById('humanDataSection').innerHTML = hdHtml;
+
+                reviewStatus = taskData.review_status || 'unreviewed';
+                updateReviewUI();
+                updateReviewProgress();
+
+                setLoadProgress(80, 'Rendering step sidebar...');
+                renderStepSidebar();
+                setLoadProgress(90, 'Rendering ' + (taskData.steps || []).length + ' steps...');
+                renderStep(0);
+                if (viewMode === 'grid') renderGrid();
+
+                setLoadProgress(100, 'Done!');
+                document.getElementById('loadingOverlay').style.display = 'none';
+            } catch (err) {
+                document.getElementById('contentArea').innerHTML =
+                    '<div style="padding:40px;color:#f44336;">Failed to load: ' + err.message + '</div>';
+                document.getElementById('loadingOverlay').style.display = 'none';
+            }
+        }
+
+        // ========== Step sidebar ==========
+
+        function renderStepSidebar() {
+            const steps = taskData.steps || [];
+            let html = '<div class="step-sidebar-header">Steps (' + steps.length + ')</div>';
+            steps.forEach((step, i) => {
+                const origIdx = step.original_index != null ? step.original_index : i;
+                const aiR = getAiStepResult(origIdx);
+                const hasError = !!stepErrors[String(origIdx)];
+                let aiDot = '';
+                if (aiR) {
+                    const dotColor = {correct:'#4caf50', wrong:'#f44336', redundant:'#ff9800', suspicious:'#ffc107'}[aiR.correctness] || '#888';
+                    const justDotColor = {good:'#4caf50', acceptable:'#8bc34a', poor:'#f44336', missing:'#ff9800'}[aiR.justification_quality] || '#888';
+                    aiDot = '<span style="width:6px;height:6px;border-radius:50%;background:' + dotColor + ';display:inline-block;margin-left:4px;flex-shrink:0;" title="AI: ' + (aiR.correctness || 'unknown') + '"></span>';
+                    aiDot += '<span style="width:6px;height:6px;border-radius:50%;background:' + justDotColor + ';display:inline-block;margin-left:2px;flex-shrink:0;" title="Justification: ' + (aiR.justification_quality || 'unknown') + '"></span>';
+                }
+                // Error mark indicator
+                let errorDot = '';
+                if (hasError) {
+                    errorDot = '<span style="width:8px;height:8px;border-radius:50%;background:#f44336;display:inline-block;margin-left:3px;flex-shrink:0;box-shadow:0 0 4px #f44336;" title="Reviewer marked error"></span>';
+                }
+                html += '<div class="step-item' + (i === 0 ? ' active' : '') + (hasError ? ' has-error' : '') + '" onclick="selectStep(' + i + ')" id="step-' + i + '" style="display:flex;align-items:center;">' +
+                    '<span class="step-num">' + i + '</span> ' +
+                    '<span class="step-action" style="flex:1;">' + (step.action || '') + '</span>' +
+                    errorDot +
+                    aiDot +
+                    '</div>';
+            });
+            document.getElementById('stepSidebar').innerHTML = html;
+        }
+
+        function selectStep(idx) {
+            currentStep = idx;
+            document.getElementById('stepCounter').textContent = 'Step ' + idx + ' / ' + ((taskData.steps || []).length - 1);
+            document.querySelectorAll('.step-item').forEach((el, i) => {
+                el.classList.toggle('active', i === idx);
+            });
+            if (viewMode === 'single') {
+                // Scroll to the step in stacked view
+                const card = document.getElementById('stacked-step-' + idx);
+                if (card) {
+                    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    document.querySelectorAll('.stacked-step-card').forEach(c => c.classList.remove('active'));
+                    card.classList.add('active');
+                }
+            }
+        }
+
+        // ========== Render step (stacked all steps) ==========
+
+        function renderStep(idx) {
+            // Render ALL steps in stacked view
+            renderAllStepsStacked();
+            // Scroll to the specified step
+            currentStep = idx;
+            document.getElementById('stepCounter').textContent = 'Step ' + idx + ' / ' + ((taskData.steps || []).length - 1);
+            const targetCard = document.getElementById('stacked-step-' + idx);
+            if (targetCard) {
+                targetCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                document.querySelectorAll('.stacked-step-card').forEach(c => c.classList.remove('active'));
+                targetCard.classList.add('active');
+            }
+            renderAnnotationPanels();
+        }
+
+        function renderAllStepsStacked() {
+            const steps = taskData.steps || [];
+            const videoWidth = taskData.video_width || 1920;
+            const videoHeight = taskData.video_height || 1080;
+            const container = document.getElementById('stepsStacked');
+            if (!container) return;
+
+            let html = '';
+            steps.forEach((step, idx) => {
+                const origIdx = step.original_index != null ? step.original_index : idx;
+                const adj = coordAdjustments[String(origIdx)];
+                const isAdjusted = !!adj;
+                const origCoord = isAdjusted ? (adj.original || step.coordinate) : step.coordinate;
+                const imgUrl = '/oss_frame/' + encodeURIComponent(folderName) + '/' + parseFloat(step.video_time).toFixed(1) + '?folder=' + encodeURIComponent(ossFolder);
+
+                const hasStepError = !!stepErrors[String(origIdx)];
+                html += '<div class="stacked-step-card' + (hasStepError ? ' has-error' : '') + '" id="stacked-step-' + idx + '" onclick="onStackedStepClick(' + idx + ')">';
+
+                // Header
+                html += '<div class="stacked-step-header"><h4>Step ' + idx + ': ' + (step.action || '');
+                if (isAdjusted) html += ' <span class="adjusted-badge">Adjusted</span>';
+                html += '</h4>';
+                // Mark Error button (reviewer only) or Delete button
+                if (!isAnnotatorMode) {
+                    html += '<button class="btn-mark-error' + (hasStepError ? ' marked' : '') + '" onclick="event.stopPropagation();toggleStepError(' + idx + ')">' + (hasStepError ? 'Unmark Error' : 'Mark Error') + '</button>';
+                }
+                html += '<button class="delete-step-btn" onclick="event.stopPropagation();confirmDeleteStep(' + idx + ')" title="Delete this step">Delete</button>';
+                html += '</div>';
+
+                // Error banner (shown for both reviewer and annotator)
+                if (hasStepError) {
+                    const errNote = (stepErrors[String(origIdx)] && stepErrors[String(origIdx)].note) || '';
+                    html += '<div class="step-error-banner"><span class="error-icon">&#9888;</span><div>';
+                    html += '<span class="error-text">Marked as error by reviewer</span>';
+                    if (errNote) html += '<div style="color:#ffab91;font-size:0.8em;margin-top:2px;">' + errNote + '</div>';
+                    if (!isAnnotatorMode) {
+                        html += '<input class="step-error-note-input" placeholder="Note for annotator..." value="' + errNote.replace(/"/g, '&quot;') + '" onclick="event.stopPropagation()" onchange="saveStepErrorNote(' + idx + ', this.value)" />';
+                    }
+                    html += '</div></div>';
+                }
+
+                // Resolution info
+                html += '<div class="image-info" id="stacked-info-' + idx + '" style="margin-bottom:4px;"><div class="resolution-info">Res: <b>' + videoWidth + ' x ' + videoHeight + '</b></div></div>';
+
+                // Screenshot with markers + drag lines
+                html += '<div class="stacked-img-container" id="stacked-img-' + idx + '" onclick="event.stopPropagation();handleStackedImageClick(event,' + idx + ')">';
+                html += '<img id="stacked-img-el-' + idx + '" src="' + imgUrl + '" data-idx="' + idx + '" />';
+                html += '<svg class="drag-line" id="stacked-drag-' + idx + '" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;"><line id="stacked-dragline-' + idx + '" /><polygon id="stacked-dragarrow-' + idx + '" /></svg>';
+                html += '</div>';
+
+                // Frame adjustment controls
+                html += '<div class="frame-adjust-controls">';
+                html += '<button class="frame-btn" onclick="event.stopPropagation();shiftFrame(' + idx + ',-0.8)" title="-0.8s">&#9664;&#9664;</button>';
+                html += '<button class="frame-btn" onclick="event.stopPropagation();shiftFrame(' + idx + ',-0.2)" title="-0.2s">&#9664;</button>';
+                html += '<span class="frame-time" id="frame-time-' + idx + '">t=' + step.video_time.toFixed(2) + 's</span>';
+                html += '<button class="frame-btn" onclick="event.stopPropagation();shiftFrame(' + idx + ',0.2)" title="+0.2s">&#9654;</button>';
+                html += '<button class="frame-btn" onclick="event.stopPropagation();shiftFrame(' + idx + ',0.8)" title="+0.8s">&#9654;&#9654;</button>';
+                html += '</div>';
+
+                // Code - editable for type/press operations
+                if (step.action === 'type' || step.action === 'press') {
+                    html += '<div class="code code-editable"><input type="text" class="code-edit-input" value="' + (step.code || '').replace(/"/g, '&quot;') + '" onchange="saveCode(' + idx + ', this.value)" title="Edit code" /></div>';
+                } else {
+                    html += '<div class="code">' + (step.code || '') + '</div>';
+                }
+
+                // Coordinate with fine-tune
+                if (step.has_coordinate) {
+                    html += '<div style="margin-bottom:6px;font-size:0.85em;">';
+                    if (isAdjusted) {
+                        html += 'Coord: <span class="current-coord" id="stacked-coord-' + idx + '">(' + step.coordinate.x + ', ' + step.coordinate.y + ')</span>';
+                        html += '<span class="original-coord">(' + origCoord.x + ', ' + origCoord.y + ')</span>';
+                    } else {
+                        html += 'Coord: <span id="stacked-coord-' + idx + '">(' + step.coordinate.x + ', ' + step.coordinate.y + ')</span>';
+                    }
+                    html += ' <button class="finetune-btn" onclick="event.stopPropagation();toggleStackedFinetune(' + idx + ')">Fine-tune</button></div>';
+                    // Finetune panel (hidden by default)
+                    html += '<div class="coord-adjust-panel" id="stacked-finetune-' + idx + '">';
+                    html += '<h5>Coordinate Fine-tuning</h5>';
+                    html += '<div class="coord-adjust-controls">';
+                    if (step.action === 'drag' && step.drag_to) {
+                        html += '<div style="margin-bottom:4px;color:#888;font-size:0.78em;">Start (From):</div>';
+                    }
+                    html += '<div class="coord-field"><label>X:</label><input type="number" class="coord-input" id="stacked-cx-' + idx + '" value="' + step.coordinate.x + '" min="0" max="' + videoWidth + '" oninput="updateStackedMarker(' + idx + ')"></div>';
+                    html += '<div class="coord-field"><label>Y:</label><input type="number" class="coord-input" id="stacked-cy-' + idx + '" value="' + step.coordinate.y + '" min="0" max="' + videoHeight + '" oninput="updateStackedMarker(' + idx + ')"></div>';
+                    if (step.action === 'drag' && step.drag_to) {
+                        html += '</div><div class="coord-adjust-controls" style="margin-top:4px;">';
+                        html += '<div style="margin-bottom:4px;color:#888;font-size:0.78em;">End (To):</div>';
+                        html += '<div class="coord-field"><label>X2:</label><input type="number" class="coord-input" id="stacked-dx-' + idx + '" value="' + step.drag_to.x + '" min="0" max="' + videoWidth + '" oninput="updateStackedMarker(' + idx + ')"></div>';
+                        html += '<div class="coord-field"><label>Y2:</label><input type="number" class="coord-input" id="stacked-dy-' + idx + '" value="' + step.drag_to.y + '" min="0" max="' + videoHeight + '" oninput="updateStackedMarker(' + idx + ')"></div>';
+                    }
+                    html += '<button class="finetune-btn save" onclick="event.stopPropagation();saveStackedCoordinate(' + idx + ')">Save</button>';
+                    html += '<button class="finetune-btn cancel" onclick="event.stopPropagation();cancelStackedFinetune(' + idx + ')">Cancel</button>';
+                    html += '<span style="color:#888;font-size:0.75em;margin-left:8px;">Click image to set</span>';
+                    html += '</div></div>';
+                }
+
+                // Description
+                if (step.description) html += '<div class="description">' + step.description + '</div>';
+
+                // Justification
+                html += '<div class="justification-edit-area">';
+                html += '<label style="color:#888;font-size:0.78em;display:block;margin-bottom:3px;">Justification:</label>';
+                html += '<textarea class="justification-input" onchange="saveJustification(' + idx + ', this.value)" placeholder="Step justification...">' + (step.justification || '') + '</textarea>';
+                html += '</div>';
+
+                // AI check
+                html += renderAiResultHtml(origIdx);
+
+                html += '</div>';
+            });
+
+            container.innerHTML = html;
+
+            // Add coordinate markers after images load
+            // Use requestAnimationFrame to ensure browser has done layout first
+            requestAnimationFrame(() => {
+                steps.forEach((step, idx) => {
+                    if (!step.has_coordinate || !step.coordinate) return;
+                    const imgEl = document.getElementById('stacked-img-el-' + idx);
+                    if (!imgEl) return;
+                    const addMarkers = function() {
+                        // Guard: if image has no layout dimensions yet, defer again
+                        if (imgEl.clientWidth === 0) {
+                            requestAnimationFrame(() => addMarkersToContainer('stacked-img-' + idx, imgEl, step, videoWidth, videoHeight));
+                            return;
+                        }
+                        addMarkersToContainer('stacked-img-' + idx, imgEl, step, videoWidth, videoHeight);
+                    };
+                    if (imgEl.complete && imgEl.naturalWidth > 0) addMarkers();
+                    else imgEl.onload = addMarkers;
+                });
+            });
+        }
+
+        function addMarkersToContainer(containerId, imgEl, step, videoWidth, videoHeight) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            // If image has no dimensions yet, defer to next frame
+            if (imgEl.clientWidth === 0 || imgEl.clientHeight === 0) {
+                requestAnimationFrame(() => addMarkersToContainer(containerId, imgEl, step, videoWidth, videoHeight));
+                return;
+            }
+            container.querySelectorAll('.coord-marker').forEach(m => m.remove());
+            const scaleX = imgEl.clientWidth / videoWidth;
+            const scaleY = imgEl.clientHeight / videoHeight;
+
+            // Update resolution info with scale if info bar exists
+            // containerId is like "stacked-img-3" -> info id is "stacked-info-3"
+            const infoId = containerId.replace('stacked-img-', 'stacked-info-');
+            const infoEl = document.getElementById(infoId);
+            if (infoEl) {
+                infoEl.innerHTML = '<div class="resolution-info">Res: <b>' + videoWidth + ' x ' + videoHeight + '</b> | Scale: <b>' + (scaleX * 100).toFixed(0) + '%</b></div>';
+            }
+
+            if (step.action === 'drag' && step.drag_to) {
+                const sx = step.coordinate.x * scaleX;
+                const sy = step.coordinate.y * scaleY;
+                const ex = step.drag_to.x * scaleX;
+                const ey = step.drag_to.y * scaleY;
+                // Start marker
+                const m1 = document.createElement('div');
+                m1.className = 'coord-marker';
+                m1.setAttribute('data-label', 'from (' + step.coordinate.x + ',' + step.coordinate.y + ')');
+                m1.style.left = sx + 'px';
+                m1.style.top = sy + 'px';
+                m1.style.display = 'block';
+                container.appendChild(m1);
+                // End marker
+                const m2 = document.createElement('div');
+                m2.className = 'coord-marker drag-end';
+                m2.setAttribute('data-label', 'to (' + step.drag_to.x + ',' + step.drag_to.y + ')');
+                m2.style.left = ex + 'px';
+                m2.style.top = ey + 'px';
+                m2.style.display = 'block';
+                container.appendChild(m2);
+                // SVG drag line with arrow
+                const dragId = containerId.replace('stacked-img-', 'stacked-drag-');
+                const lineId = containerId.replace('stacked-img-', 'stacked-dragline-');
+                const arrowId = containerId.replace('stacked-img-', 'stacked-dragarrow-');
+                const dragSvg = document.getElementById(dragId);
+                const linePath = document.getElementById(lineId);
+                const arrow = document.getElementById(arrowId);
+                if (dragSvg && linePath && arrow) {
+                    linePath.setAttribute('x1', sx);
+                    linePath.setAttribute('y1', sy);
+                    linePath.setAttribute('x2', ex);
+                    linePath.setAttribute('y2', ey);
+                    const angle = Math.atan2(ey - sy, ex - sx);
+                    const aLen = 10;
+                    const ax1 = ex - aLen * Math.cos(angle - 0.4);
+                    const ay1 = ey - aLen * Math.sin(angle - 0.4);
+                    const ax2 = ex - aLen * Math.cos(angle + 0.4);
+                    const ay2 = ey - aLen * Math.sin(angle + 0.4);
+                    arrow.setAttribute('points', ex + ',' + ey + ' ' + ax1 + ',' + ay1 + ' ' + ax2 + ',' + ay2);
+                    dragSvg.style.display = 'block';
+                }
+            } else if (step.action === 'scroll' && step.scroll_info) {
+                // Scroll arrow
+                const px = step.coordinate.x * scaleX;
+                const py = step.coordinate.y * scaleY;
+                const si = step.scroll_info;
+                const arrowLen = 40;
+                let endX = px, endY = py;
+                let label = 'Scroll';
+                if (si.dy > 0) { endY = py + arrowLen; label = 'Scroll Down x' + si.dy; }
+                else if (si.dy < 0) { endY = py - arrowLen; label = 'Scroll Up x' + Math.abs(si.dy); }
+                if (si.dx > 0) { endX = px + arrowLen; label = 'Scroll Right x' + si.dx; }
+                else if (si.dx < 0) { endX = px - arrowLen; label = 'Scroll Left x' + Math.abs(si.dx); }
+                // Draw SVG arrow for scroll
+                const scrollSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                scrollSvg.setAttribute('class', 'drag-line');
+                scrollSvg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;';
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('x1', px); line.setAttribute('y1', py);
+                line.setAttribute('x2', endX); line.setAttribute('y2', endY);
+                line.setAttribute('stroke', '#ff0040'); line.setAttribute('stroke-width', '2');
+                line.setAttribute('marker-end', 'url(#scrollArrowHead)');
+                // Arrowhead marker def
+                const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+                const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+                marker.setAttribute('id', 'scrollArrowHead'); marker.setAttribute('markerWidth', '10');
+                marker.setAttribute('markerHeight', '7'); marker.setAttribute('refX', '10');
+                marker.setAttribute('refY', '3.5'); marker.setAttribute('orient', 'auto');
+                const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                polygon.setAttribute('points', '0 0, 10 3.5, 0 7');
+                polygon.setAttribute('fill', '#ff0040');
+                marker.appendChild(polygon); defs.appendChild(marker); scrollSvg.appendChild(defs);
+                scrollSvg.appendChild(line);
+                // Label text
+                const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                text.setAttribute('x', px + 15); text.setAttribute('y', py - 8);
+                text.setAttribute('fill', '#ff0040'); text.setAttribute('font-size', '11');
+                text.setAttribute('font-weight', 'bold');
+                text.textContent = label;
+                scrollSvg.appendChild(text);
+                container.appendChild(scrollSvg);
+                // Also show position marker
+                const m = document.createElement('div');
+                m.className = 'coord-marker';
+                m.setAttribute('data-label', label + ' (' + step.coordinate.x + ',' + step.coordinate.y + ')');
+                m.style.left = px + 'px'; m.style.top = py + 'px'; m.style.display = 'block';
+                m.style.borderColor = '#ff9800'; // Orange for scroll
+                container.appendChild(m);
+                const dragId = containerId.replace('stacked-img-', 'stacked-drag-');
+                const dragSvg = document.getElementById(dragId);
+                if (dragSvg) dragSvg.style.display = 'none';
+            } else {
+                // Click actions (single, double, right, triple)
+                const px = step.coordinate.x * scaleX;
+                const py = step.coordinate.y * scaleY;
+                const clickType = step.click_type || 'click';
+                const m = document.createElement('div');
+                m.className = 'coord-marker';
+                let label = step.action + ' (' + step.coordinate.x + ',' + step.coordinate.y + ')';
+                if (clickType === 'doubleClick') { label = 'dblclick (' + step.coordinate.x + ',' + step.coordinate.y + ')'; m.style.boxShadow = '0 0 8px rgba(255,0,64,0.5), 0 0 16px rgba(255,0,64,0.3)'; }
+                else if (clickType === 'rightClick') { label = 'rightclick (' + step.coordinate.x + ',' + step.coordinate.y + ')'; m.style.borderStyle = 'dashed'; }
+                else if (clickType === 'tripleClick') { label = 'triple (' + step.coordinate.x + ',' + step.coordinate.y + ')'; m.style.boxShadow = '0 0 8px rgba(255,0,64,0.5), 0 0 16px rgba(255,0,64,0.3), 0 0 24px rgba(255,0,64,0.2)'; }
+                m.setAttribute('data-label', label);
+                m.style.left = px + 'px'; m.style.top = py + 'px'; m.style.display = 'block';
+                container.appendChild(m);
+                // Add second ring for double/triple click
+                if (clickType === 'doubleClick' || clickType === 'tripleClick') {
+                    const m2 = document.createElement('div');
+                    m2.className = 'coord-marker';
+                    m2.style.left = px + 'px'; m2.style.top = py + 'px'; m2.style.display = 'block';
+                    m2.style.width = '40px'; m2.style.height = '40px'; m2.style.opacity = '0.5';
+                    m2.style.pointerEvents = 'none';
+                    container.appendChild(m2);
+                }
+                if (clickType === 'tripleClick') {
+                    const m3 = document.createElement('div');
+                    m3.className = 'coord-marker';
+                    m3.style.left = px + 'px'; m3.style.top = py + 'px'; m3.style.display = 'block';
+                    m3.style.width = '52px'; m3.style.height = '52px'; m3.style.opacity = '0.3';
+                    m3.style.pointerEvents = 'none';
+                    container.appendChild(m3);
+                }
+                // Hide drag line
+                const dragId = containerId.replace('stacked-img-', 'stacked-drag-');
+                const dragSvg = document.getElementById(dragId);
+                if (dragSvg) dragSvg.style.display = 'none';
+            }
+        }
+
+        function onStackedStepClick(idx) {
+            currentStep = idx;
+            document.querySelectorAll('.stacked-step-card').forEach(c => c.classList.remove('active'));
+            document.getElementById('stacked-step-' + idx).classList.add('active');
+            document.querySelectorAll('.step-item').forEach((el, i) => el.classList.toggle('active', i === idx));
+            document.getElementById('stepCounter').textContent = 'Step ' + idx + ' / ' + ((taskData.steps || []).length - 1);
+        }
+
+        // Stacked view coordinate fine-tuning
+        let stackedFinetuneIdx = null;
+
+        function toggleStackedFinetune(idx) {
+            const panel = document.getElementById('stacked-finetune-' + idx);
+            if (!panel) return;
+            if (stackedFinetuneIdx === idx) {
+                panel.classList.remove('show');
+                stackedFinetuneIdx = null;
+            } else {
+                // Close any other open panel
+                if (stackedFinetuneIdx !== null) {
+                    const prev = document.getElementById('stacked-finetune-' + stackedFinetuneIdx);
+                    if (prev) prev.classList.remove('show');
+                }
+                panel.classList.add('show');
+                stackedFinetuneIdx = idx;
+            }
+        }
+
+        function updateStackedMarker(idx) {
+            const step = taskData.steps[idx];
+            const xInput = document.getElementById('stacked-cx-' + idx);
+            const yInput = document.getElementById('stacked-cy-' + idx);
+            const imgEl = document.getElementById('stacked-img-el-' + idx);
+            if (!xInput || !yInput || !imgEl) return;
+            const x = parseInt(xInput.value) || 0;
+            const y = parseInt(yInput.value) || 0;
+            const videoWidth = taskData.video_width || 1920;
+            const videoHeight = taskData.video_height || 1080;
+            // Update marker with temp coordinate
+            const tempStep = Object.assign({}, step, { coordinate: { x, y } });
+            addMarkersToContainer('stacked-img-' + idx, imgEl, tempStep, videoWidth, videoHeight);
+        }
+
+        async function saveStackedCoordinate(idx) {
+            const step = taskData.steps[idx];
+            const xInput = document.getElementById('stacked-cx-' + idx);
+            const yInput = document.getElementById('stacked-cy-' + idx);
+            if (!xInput || !yInput) return;
+            const x = parseInt(xInput.value) || 0;
+            const y = parseInt(yInput.value) || 0;
+            const origIdx = step.original_index != null ? step.original_index : idx;
+            const adj = coordAdjustments[String(origIdx)];
+            let origX, origY;
+            if (adj && adj.original) { origX = adj.original.x; origY = adj.original.y; }
+            else { origX = step.coordinate.x; origY = step.coordinate.y; }
+
+            // Handle drag-end coordinates
+            let dragToX = null, dragToY = null, origDragToX = null, origDragToY = null;
+            if (step.action === 'drag' && step.drag_to) {
+                const dxInput = document.getElementById('stacked-dx-' + idx);
+                const dyInput = document.getElementById('stacked-dy-' + idx);
+                if (dxInput && dyInput) {
+                    dragToX = parseInt(dxInput.value) || 0;
+                    dragToY = parseInt(dyInput.value) || 0;
+                    if (adj && adj.original_drag_to) { origDragToX = adj.original_drag_to.x; origDragToY = adj.original_drag_to.y; }
+                    else { origDragToX = step.drag_to.x; origDragToY = step.drag_to.y; }
+                }
+            }
+
+            var body = { folder_name: folderName, oss_folder: ossFolder, step_index: origIdx, x: x, y: y, original_x: origX, original_y: origY };
+            if (dragToX !== null) {
+                body.drag_to_x = dragToX;
+                body.drag_to_y = dragToY;
+                body.original_drag_to_x = origDragToX;
+                body.original_drag_to_y = origDragToY;
+            }
+
+            await fetch('/api/oss/update_coordinate', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
+            var adjData = { x: x, y: y, original: { x: origX, y: origY } };
+            if (dragToX !== null) {
+                adjData.drag_to = { x: dragToX, y: dragToY };
+                adjData.original_drag_to = { x: origDragToX, y: origDragToY };
+            }
+            coordAdjustments[String(origIdx)] = adjData;
+            step.coordinate = { x: x, y: y };
+            if (step.action === 'drag' && dragToX !== null) {
+                step.drag_to = { x: dragToX, y: dragToY };
+                step.code = 'pyautogui.moveTo(' + x + ', ' + y + '); pyautogui.dragTo(' + dragToX + ', ' + dragToY + ')';
+            } else if (step.action === 'click') {
+                if (step.code.includes('doubleClick')) step.code = 'pyautogui.doubleClick(' + x + ', ' + y + ')';
+                else if (step.code.includes('rightClick')) step.code = 'pyautogui.rightClick(' + x + ', ' + y + ')';
+                else if (step.code.includes('clicks=3')) step.code = 'pyautogui.click(' + x + ', ' + y + ', clicks=3)';
+                else step.code = 'pyautogui.click(' + x + ', ' + y + ')';
+            }
+            stackedFinetuneIdx = null;
+            renderAllStepsStacked();
+            renderStepSidebar();
+        }
+
+        function cancelStackedFinetune(idx) {
+            const panel = document.getElementById('stacked-finetune-' + idx);
+            if (panel) panel.classList.remove('show');
+            stackedFinetuneIdx = null;
+            // Restore original marker
+            const step = taskData.steps[idx];
+            const imgEl = document.getElementById('stacked-img-el-' + idx);
+            if (step && imgEl) {
+                addMarkersToContainer('stacked-img-' + idx, imgEl, step, taskData.video_width || 1920, taskData.video_height || 1080);
+            }
+        }
+
+        function handleStackedImageClick(event, idx) {
+            if (stackedFinetuneIdx !== idx) return;
+            const imgEl = document.getElementById('stacked-img-el-' + idx);
+            if (!imgEl) return;
+            const rect = imgEl.getBoundingClientRect();
+            const videoWidth = taskData.video_width || 1920;
+            const videoHeight = taskData.video_height || 1080;
+            const scaleX = imgEl.clientWidth / videoWidth;
+            const scaleY = imgEl.clientHeight / videoHeight;
+            const x = Math.round((event.clientX - rect.left) / scaleX);
+            const y = Math.round((event.clientY - rect.top) / scaleY);
+            const xInput = document.getElementById('stacked-cx-' + idx);
+            const yInput = document.getElementById('stacked-cy-' + idx);
+            if (xInput) xInput.value = x;
+            if (yInput) yInput.value = y;
+            updateStackedMarker(idx);
+        }
+
+        // ========== View mode: single / grid ==========
+
+        function setViewMode(mode) {
+            viewMode = mode;
+            document.getElementById('viewSingle').classList.toggle('active', mode === 'single');
+            document.getElementById('viewGrid').classList.toggle('active', mode === 'grid');
+            document.getElementById('singleStepView').style.display = mode === 'single' ? '' : 'none';
+            document.getElementById('gridStepView').style.display = mode === 'grid' ? '' : 'none';
+            // Hide prev/next in both modes (stacked view scrolls, grid has pagination)
+            document.getElementById('prevBtn').style.display = 'none';
+            document.getElementById('nextBtn').style.display = 'none';
+            document.getElementById('stepCounter').style.display = mode === 'single' ? '' : 'none';
+            document.getElementById('pageSizeSelect').style.display = mode === 'grid' ? '' : 'none';
+            if (mode === 'single') {
+                renderAllStepsStacked();
+            } else if (mode === 'grid') {
+                gridPage = 0;
+                renderGrid();
+            }
+        }
+
+        function changePageSize() {
+            gridPageSize = parseInt(document.getElementById('pageSizeSelect').value) || 30;
+            gridPage = 0;
+            renderGrid();
+        }
+
+        function renderGrid() {
+            const steps = taskData ? taskData.steps || [] : [];
+            const totalPages = Math.max(1, Math.ceil(steps.length / gridPageSize));
+            if (gridPage >= totalPages) gridPage = totalPages - 1;
+            const start = gridPage * gridPageSize;
+            const end = Math.min(start + gridPageSize, steps.length);
+            const pageSteps = steps.slice(start, end);
+            const videoWidth = taskData ? taskData.video_width || 1920 : 1920;
+            const videoHeight = taskData ? taskData.video_height || 1080 : 1080;
+
+            let html = '';
+            pageSteps.forEach((step, localIdx) => {
+                const globalIdx = start + localIdx;
+                const origIdx = step.original_index != null ? step.original_index : globalIdx;
+                const adj = coordAdjustments[String(origIdx)];
+                const isAdjusted = !!adj;
+                const imgUrl = '/oss_frame/' + encodeURIComponent(folderName) + '/' + parseFloat(step.video_time).toFixed(1) + '?folder=' + encodeURIComponent(ossFolder);
+
+                // AI check class for card border color
+                const aiR = getAiStepResult(origIdx);
+                let aiCardClass = '';
+                if (aiR) aiCardClass = ' ai-' + (aiR.correctness || 'unknown');
+                const hasGridError = !!stepErrors[String(origIdx)];
+                if (hasGridError) aiCardClass += ' has-error';
+
+                html += '<div class="grid-card' + aiCardClass + '" data-step="' + globalIdx + '" onclick="openDetail(' + globalIdx + ')">';
+                html += '<div class="grid-card-img" id="grid-img-' + globalIdx + '">';
+                html += '<img src="' + imgUrl + '" loading="lazy" data-step="' + globalIdx + '" />';
+                html += '</div>';
+                html += '<div class="grid-card-body">';
+                html += '<div class="grid-card-header"><span class="grid-card-step">Step ' + globalIdx + '</span>';
+                html += '<span class="grid-card-action">' + (step.action || '') + '</span></div>';
+                if (step.code) html += '<div class="grid-card-code">' + step.code + '</div>';
+                if (step.justification) html += '<div class="grid-card-justification">' + step.justification + '</div>';
+                let badges = '';
+                if (hasGridError) badges += '<span class="badge" style="background:#f44336;color:#fff;">ERROR</span>';
+                if (isAdjusted) badges += '<span class="badge badge-adjusted">Adjusted</span>';
+                if (aiR) {
+                    const ccls = {correct:'ai-correct', wrong:'ai-wrong', redundant:'ai-redundant', suspicious:'ai-suspicious'}[aiR.correctness] || 'ai-unknown';
+                    badges += '<span class="badge ai-badge ' + ccls + '">' + (aiR.correctness || '?').toUpperCase() + '</span>';
+                    if (aiR.justification_quality === 'poor' || aiR.justification_quality === 'missing') {
+                        badges += '<span class="badge ai-badge ai-poor">Just:' + aiR.justification_quality.toUpperCase() + '</span>';
+                    }
+                }
+                if (badges) html += '<div class="grid-card-badges">' + badges + '</div>';
+                html += '</div></div>';
+            });
+            document.getElementById('stepsGrid').innerHTML = html;
+
+            // Render coord markers on grid images after images load
+            pageSteps.forEach((step, localIdx) => {
+                const globalIdx = start + localIdx;
+                if (step.has_coordinate && step.coordinate) {
+                    const container = document.getElementById('grid-img-' + globalIdx);
+                    const img = container ? container.querySelector('img') : null;
+                    if (img) {
+                        const addMarkers = function() {
+                            // Remove old markers
+                            container.querySelectorAll('.grid-marker').forEach(m => m.remove());
+                            const scaleX = img.clientWidth / videoWidth;
+                            const scaleY = img.clientHeight / videoHeight;
+                            if (step.action === 'drag' && step.drag_to) {
+                                const m1 = document.createElement('div');
+                                m1.className = 'grid-marker';
+                                m1.style.left = (step.coordinate.x * scaleX) + 'px';
+                                m1.style.top = (step.coordinate.y * scaleY) + 'px';
+                                container.appendChild(m1);
+                                const m2 = document.createElement('div');
+                                m2.className = 'grid-marker drag-end';
+                                m2.style.left = (step.drag_to.x * scaleX) + 'px';
+                                m2.style.top = (step.drag_to.y * scaleY) + 'px';
+                                container.appendChild(m2);
+                            } else {
+                                const m = document.createElement('div');
+                                m.className = 'grid-marker';
+                                m.style.left = (step.coordinate.x * scaleX) + 'px';
+                                m.style.top = (step.coordinate.y * scaleY) + 'px';
+                                container.appendChild(m);
+                            }
+                        };
+                        if (img.complete) addMarkers();
+                        else img.onload = addMarkers;
+                    }
+                }
+            });
+
+            // Page navigation
+            let navHtml = '';
+            if (totalPages > 1) {
+                navHtml += '<button class="grid-page-btn" onclick="gridPrevPage()" ' + (gridPage <= 0 ? 'disabled' : '') + '>Prev Page</button>';
+                navHtml += '<span class="grid-page-info">Page ' + (gridPage + 1) + ' / ' + totalPages + ' (' + steps.length + ' steps)</span>';
+                navHtml += '<button class="grid-page-btn" onclick="gridNextPage()" ' + (gridPage >= totalPages - 1 ? 'disabled' : '') + '>Next Page</button>';
+            } else {
+                navHtml += '<span class="grid-page-info">' + steps.length + ' steps</span>';
+            }
+            document.getElementById('gridPageNav').innerHTML = navHtml;
+            document.getElementById('gridPageNavBottom').innerHTML = navHtml;
+        }
+
+        function gridPrevPage() { if (gridPage > 0) { gridPage--; renderGrid(); } }
+        function gridNextPage() {
+            const steps = taskData ? taskData.steps || [] : [];
+            const totalPages = Math.ceil(steps.length / gridPageSize);
+            if (gridPage < totalPages - 1) { gridPage++; renderGrid(); }
+        }
+
+        // ========== Detail overlay (grid card click) ==========
+
+        function openDetail(idx) {
+            detailStepIdx = idx;
+            renderDetailOverlay(idx);
+            document.getElementById('detailOverlay').classList.add('show');
+        }
+
+        function closeDetail() {
+            document.getElementById('detailOverlay').classList.remove('show');
+            detailStepIdx = -1;
+            // Re-render grid in case justification was edited
+            if (viewMode === 'grid') renderGrid();
+        }
+
+        function detailPrev() {
+            if (detailStepIdx > 0) { detailStepIdx--; renderDetailOverlay(detailStepIdx); }
+        }
+
+        function detailNext() {
+            const steps = taskData ? taskData.steps || [] : [];
+            if (detailStepIdx < steps.length - 1) { detailStepIdx++; renderDetailOverlay(detailStepIdx); }
+        }
+
+        let detailFinetuneActive = false;
+
+        function renderDetailOverlay(idx) {
+            const steps = taskData ? taskData.steps || [] : [];
+            if (idx < 0 || idx >= steps.length) return;
+            const step = steps[idx];
+            const origIdx = step.original_index != null ? step.original_index : idx;
+            const adj = coordAdjustments[String(origIdx)];
+            const isAdjusted = !!adj;
+            const origCoord = isAdjusted ? (adj.original || step.coordinate) : step.coordinate;
+            const videoWidth = taskData.video_width || 1920;
+            const videoHeight = taskData.video_height || 1080;
+            detailFinetuneActive = false;
+
+            document.getElementById('detailOverlayTitle').textContent = 'Step ' + idx + ': ' + (step.action || '');
+            document.getElementById('detailPrevBtn').disabled = idx <= 0;
+            document.getElementById('detailNextBtn').disabled = idx >= steps.length - 1;
+
+            const imgUrl = '/oss_frame/' + encodeURIComponent(folderName) + '/' + parseFloat(step.video_time).toFixed(1) + '?folder=' + encodeURIComponent(ossFolder);
+
+            let html = '<div class="image-info" id="detailResInfo"><div class="resolution-info">Res: <b>' + videoWidth + ' x ' + videoHeight + '</b></div></div>';
+            html += '<div style="position:relative;display:inline-block;max-width:100%;background:#000;border-radius:6px;overflow:hidden;margin-bottom:10px;" id="detailImgContainer" onclick="handleDetailImageClick(event,' + idx + ')">';
+            html += '<img id="detailImg" src="' + imgUrl + '" style="max-width:100%;max-height:60vh;display:block;" />';
+            html += '<svg class="drag-line" id="detailDragSvg" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;"><line id="detailDragLine" /><polygon id="detailDragArrow" /></svg>';
+            html += '</div>';
+
+            // Frame adjustment controls
+            html += '<div class="frame-adjust-controls">';
+            html += '<button class="frame-btn" onclick="shiftFrame(' + idx + ',-0.8)" title="-0.8s">&#9664;&#9664;</button>';
+            html += '<button class="frame-btn" onclick="shiftFrame(' + idx + ',-0.2)" title="-0.2s">&#9664;</button>';
+            html += '<span class="frame-time" id="detail-frame-time">t=' + step.video_time.toFixed(2) + 's</span>';
+            html += '<button class="frame-btn" onclick="shiftFrame(' + idx + ',0.2)" title="+0.2s">&#9654;</button>';
+            html += '<button class="frame-btn" onclick="shiftFrame(' + idx + ',0.8)" title="+0.8s">&#9654;&#9654;</button>';
+            html += '</div>';
+
+            // Error banner in detail
+            const hasDetailError = !!stepErrors[String(origIdx)];
+            if (hasDetailError) {
+                const errNote = (stepErrors[String(origIdx)] && stepErrors[String(origIdx)].note) || '';
+                html += '<div class="step-error-banner"><span class="error-icon">&#9888;</span><div>';
+                html += '<span class="error-text">Marked as error by reviewer</span>';
+                if (errNote) html += '<div style="color:#ffab91;font-size:0.8em;margin-top:2px;">' + errNote + '</div>';
+                if (!isAnnotatorMode) {
+                    html += '<input class="step-error-note-input" placeholder="Note for annotator..." value="' + errNote.replace(/"/g, '&quot;') + '" onchange="saveStepErrorNote(' + idx + ', this.value)" />';
+                }
+                html += '</div></div>';
+            }
+
+            html += '<div class="step-details" style="margin-bottom:10px;">';
+            html += '<h4>Step ' + idx + ': ' + (step.action || '');
+            if (isAdjusted) html += ' <span class="adjusted-badge">Adjusted</span>';
+            if (!isAnnotatorMode) {
+                html += ' <button class="btn-mark-error' + (hasDetailError ? ' marked' : '') + '" onclick="toggleStepError(' + idx + ');renderDetailOverlay(' + idx + ')">' + (hasDetailError ? 'Unmark Error' : 'Mark Error') + '</button>';
+            }
+            html += ' <button class="delete-step-btn" onclick="confirmDeleteStep(' + idx + ')" title="Delete this step">Delete Step</button>';
+            html += '</h4>';
+            if (step.action === 'type' || step.action === 'press') {
+                html += '<div class="code code-editable"><input type="text" class="code-edit-input" value="' + (step.code || '').replace(/"/g, '&quot;') + '" onchange="saveCode(' + idx + ', this.value)" title="Edit code" /></div>';
+            } else {
+                html += '<div class="code">' + (step.code || '') + '</div>';
+            }
+            if (step.has_coordinate) {
+                html += '<div style="margin-bottom:6px;font-size:0.85em;">';
+                if (isAdjusted) {
+                    html += 'Coord: <span class="current-coord" id="detail-coord-display">(' + step.coordinate.x + ', ' + step.coordinate.y + ')</span>';
+                    html += '<span class="original-coord">(' + origCoord.x + ', ' + origCoord.y + ')</span>';
+                } else {
+                    html += 'Coord: <span id="detail-coord-display">(' + step.coordinate.x + ', ' + step.coordinate.y + ')</span>';
+                }
+                html += ' <button class="finetune-btn" onclick="toggleDetailFinetune(' + idx + ')">Fine-tune</button></div>';
+                // Finetune panel
+                html += '<div class="coord-adjust-panel" id="detail-finetune-panel">';
+                html += '<h5>Coordinate Fine-tuning</h5>';
+                html += '<div class="coord-adjust-controls">';
+                if (step.action === 'drag' && step.drag_to) {
+                    html += '<div style="margin-bottom:4px;color:#888;font-size:0.78em;">Start (From):</div>';
+                }
+                html += '<div class="coord-field"><label>X:</label><input type="number" class="coord-input" id="detail-cx" value="' + step.coordinate.x + '" min="0" max="' + videoWidth + '" oninput="updateDetailMarker(' + idx + ')"></div>';
+                html += '<div class="coord-field"><label>Y:</label><input type="number" class="coord-input" id="detail-cy" value="' + step.coordinate.y + '" min="0" max="' + videoHeight + '" oninput="updateDetailMarker(' + idx + ')"></div>';
+                if (step.action === 'drag' && step.drag_to) {
+                    html += '</div><div class="coord-adjust-controls" style="margin-top:4px;">';
+                    html += '<div style="margin-bottom:4px;color:#888;font-size:0.78em;">End (To):</div>';
+                    html += '<div class="coord-field"><label>X2:</label><input type="number" class="coord-input" id="detail-dx" value="' + step.drag_to.x + '" min="0" max="' + videoWidth + '" oninput="updateDetailMarker(' + idx + ')"></div>';
+                    html += '<div class="coord-field"><label>Y2:</label><input type="number" class="coord-input" id="detail-dy" value="' + step.drag_to.y + '" min="0" max="' + videoHeight + '" oninput="updateDetailMarker(' + idx + ')"></div>';
+                }
+                html += '<button class="finetune-btn save" onclick="saveDetailCoordinate(' + idx + ')">Save</button>';
+                html += '<button class="finetune-btn cancel" onclick="cancelDetailFinetune(' + idx + ')">Cancel</button>';
+                html += '<span style="color:#888;font-size:0.75em;margin-left:8px;">Click image to set</span>';
+                html += '</div></div>';
+            }
+            if (step.description) html += '<div class="description">' + step.description + '</div>';
+            html += '<div class="justification-edit-area">';
+            html += '<label style="color:#888;font-size:0.78em;display:block;margin-bottom:3px;">Justification:</label>';
+            html += '<textarea class="justification-input" onchange="saveJustification(' + idx + ', this.value)" placeholder="Step justification...">' + (step.justification || '') + '</textarea>';
+            html += '</div>';
+            html += renderAiResultHtml(origIdx);
+            html += '</div>';
+
+            document.getElementById('detailOverlayBody').innerHTML = html;
+
+            // Add markers + drag lines + update scale info
+            const detailImg = document.getElementById('detailImg');
+            const doDetailMarkers = function() {
+                const container = document.getElementById('detailImgContainer');
+                if (!container) return;
+                container.querySelectorAll('.coord-marker').forEach(m => m.remove());
+                const scaleX = detailImg.clientWidth / videoWidth;
+                const scaleY = detailImg.clientHeight / videoHeight;
+                // Update res info with scale
+                const resInfo = document.getElementById('detailResInfo');
+                if (resInfo) resInfo.innerHTML = '<div class="resolution-info">Res: <b>' + videoWidth + ' x ' + videoHeight + '</b> | Scale: <b>' + (scaleX * 100).toFixed(0) + '%</b></div>';
+                if (step.has_coordinate && step.coordinate) {
+                    if (step.action === 'drag' && step.drag_to) {
+                        const sx = step.coordinate.x * scaleX, sy = step.coordinate.y * scaleY;
+                        const ex = step.drag_to.x * scaleX, ey = step.drag_to.y * scaleY;
+                        const m1 = document.createElement('div'); m1.className = 'coord-marker';
+                        m1.setAttribute('data-label', 'from (' + step.coordinate.x + ',' + step.coordinate.y + ')');
+                        m1.style.left = sx + 'px'; m1.style.top = sy + 'px'; m1.style.display = 'block';
+                        container.appendChild(m1);
+                        const m2 = document.createElement('div'); m2.className = 'coord-marker drag-end';
+                        m2.setAttribute('data-label', 'to (' + step.drag_to.x + ',' + step.drag_to.y + ')');
+                        m2.style.left = ex + 'px'; m2.style.top = ey + 'px'; m2.style.display = 'block';
+                        container.appendChild(m2);
+                        const dSvg = document.getElementById('detailDragSvg');
+                        const dLine = document.getElementById('detailDragLine');
+                        const dArrow = document.getElementById('detailDragArrow');
+                        if (dSvg && dLine && dArrow) {
+                            dLine.setAttribute('x1', sx); dLine.setAttribute('y1', sy);
+                            dLine.setAttribute('x2', ex); dLine.setAttribute('y2', ey);
+                            const angle = Math.atan2(ey - sy, ex - sx), aLen = 10;
+                            dArrow.setAttribute('points', ex+','+ey+' '+(ex-aLen*Math.cos(angle-0.4))+','+(ey-aLen*Math.sin(angle-0.4))+' '+(ex-aLen*Math.cos(angle+0.4))+','+(ey-aLen*Math.sin(angle+0.4)));
+                            dSvg.style.display = 'block';
+                        }
+                    } else {
+                        const m = document.createElement('div'); m.className = 'coord-marker';
+                        m.setAttribute('data-label', step.action + ' (' + step.coordinate.x + ',' + step.coordinate.y + ')');
+                        m.style.left = (step.coordinate.x * scaleX) + 'px'; m.style.top = (step.coordinate.y * scaleY) + 'px';
+                        m.style.display = 'block'; container.appendChild(m);
+                        const dSvg = document.getElementById('detailDragSvg');
+                        if (dSvg) dSvg.style.display = 'none';
+                    }
+                }
+            };
+            if (detailImg) {
+                if (detailImg.complete && detailImg.naturalWidth > 0) doDetailMarkers();
+                else detailImg.onload = doDetailMarkers;
+            }
+        }
+
+        function toggleDetailFinetune(idx) {
+            const panel = document.getElementById('detail-finetune-panel');
+            if (!panel) return;
+            detailFinetuneActive = !detailFinetuneActive;
+            panel.classList.toggle('show', detailFinetuneActive);
+        }
+
+        function updateDetailMarker(idx) {
+            const step = taskData.steps[idx];
+            const xInput = document.getElementById('detail-cx');
+            const yInput = document.getElementById('detail-cy');
+            const imgEl = document.getElementById('detailImg');
+            if (!xInput || !yInput || !imgEl) return;
+            const x = parseInt(xInput.value) || 0;
+            const y = parseInt(yInput.value) || 0;
+            const videoWidth = taskData.video_width || 1920;
+            const videoHeight = taskData.video_height || 1080;
+            const container = document.getElementById('detailImgContainer');
+            if (!container) return;
+            container.querySelectorAll('.coord-marker').forEach(m => m.remove());
+            const scaleX = imgEl.clientWidth / videoWidth;
+            const scaleY = imgEl.clientHeight / videoHeight;
+            const m = document.createElement('div'); m.className = 'coord-marker';
+            m.setAttribute('data-label', step.action + ' (' + x + ',' + y + ')');
+            m.style.left = (x * scaleX) + 'px'; m.style.top = (y * scaleY) + 'px';
+            m.style.display = 'block'; container.appendChild(m);
+        }
+
+        function handleDetailImageClick(event, idx) {
+            if (!detailFinetuneActive) return;
+            const imgEl = document.getElementById('detailImg');
+            if (!imgEl) return;
+            const rect = imgEl.getBoundingClientRect();
+            const videoWidth = taskData.video_width || 1920;
+            const videoHeight = taskData.video_height || 1080;
+            const scaleX = imgEl.clientWidth / videoWidth;
+            const scaleY = imgEl.clientHeight / videoHeight;
+            const x = Math.round((event.clientX - rect.left) / scaleX);
+            const y = Math.round((event.clientY - rect.top) / scaleY);
+            const xInput = document.getElementById('detail-cx');
+            const yInput = document.getElementById('detail-cy');
+            if (xInput) xInput.value = x;
+            if (yInput) yInput.value = y;
+            updateDetailMarker(idx);
+        }
+
+        async function saveDetailCoordinate(idx) {
+            const step = taskData.steps[idx];
+            const xInput = document.getElementById('detail-cx');
+            const yInput = document.getElementById('detail-cy');
+            if (!xInput || !yInput) return;
+            const x = parseInt(xInput.value) || 0;
+            const y = parseInt(yInput.value) || 0;
+            const origIdx = step.original_index != null ? step.original_index : idx;
+            const adj = coordAdjustments[String(origIdx)];
+            let origX, origY;
+            if (adj && adj.original) { origX = adj.original.x; origY = adj.original.y; }
+            else { origX = step.coordinate.x; origY = step.coordinate.y; }
+
+            let dragToX = null, dragToY = null, origDragToX = null, origDragToY = null;
+            if (step.action === 'drag' && step.drag_to) {
+                const dxI = document.getElementById('detail-dx');
+                const dyI = document.getElementById('detail-dy');
+                if (dxI && dyI) {
+                    dragToX = parseInt(dxI.value) || 0;
+                    dragToY = parseInt(dyI.value) || 0;
+                    if (adj && adj.original_drag_to) { origDragToX = adj.original_drag_to.x; origDragToY = adj.original_drag_to.y; }
+                    else { origDragToX = step.drag_to.x; origDragToY = step.drag_to.y; }
+                }
+            }
+
+            var body = { folder_name: folderName, oss_folder: ossFolder, step_index: origIdx, x: x, y: y, original_x: origX, original_y: origY };
+            if (dragToX !== null) { body.drag_to_x = dragToX; body.drag_to_y = dragToY; body.original_drag_to_x = origDragToX; body.original_drag_to_y = origDragToY; }
+
+            await fetch('/api/oss/update_coordinate', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
+            var adjData = { x: x, y: y, original: { x: origX, y: origY } };
+            if (dragToX !== null) { adjData.drag_to = { x: dragToX, y: dragToY }; adjData.original_drag_to = { x: origDragToX, y: origDragToY }; }
+            coordAdjustments[String(origIdx)] = adjData;
+            step.coordinate = { x: x, y: y };
+            if (step.action === 'drag' && dragToX !== null) {
+                step.drag_to = { x: dragToX, y: dragToY };
+                step.code = 'pyautogui.moveTo(' + x + ', ' + y + '); pyautogui.dragTo(' + dragToX + ', ' + dragToY + ')';
+            } else if (step.action === 'click') {
+                if (step.code.includes('doubleClick')) step.code = 'pyautogui.doubleClick(' + x + ', ' + y + ')';
+                else if (step.code.includes('rightClick')) step.code = 'pyautogui.rightClick(' + x + ', ' + y + ')';
+                else if (step.code.includes('clicks=3')) step.code = 'pyautogui.click(' + x + ', ' + y + ', clicks=3)';
+                else step.code = 'pyautogui.click(' + x + ', ' + y + ')';
+            }
+            detailFinetuneActive = false;
+            renderDetailOverlay(idx);
+            renderGrid();
+            renderStepSidebar();
+        }
+
+        function cancelDetailFinetune(idx) {
+            detailFinetuneActive = false;
+            renderDetailOverlay(idx);
+        }
+
+        // ========== Annotation panels ==========
+
+        function renderAnnotationPanels() {
+            const ann = annotation || {};
+            const scores = ann.scores || {};
+
+            // Annotators only see knowledge panel, not verdict/evaluation
+            if (isAnnotatorMode) {
+                document.getElementById('verdictPanel').innerHTML = '';
+                document.getElementById('evaluationPanel').innerHTML = '';
+            } else {
+            document.getElementById('verdictPanel').innerHTML =
+                '<h4>Case Verdict</h4>' +
+                '<div class="mark-buttons">' +
+                '<button class="mark-btn pass' + (ann.mark === 'pass' ? ' active' : '') + '" onclick="setMark(\\'pass\\')">PASS</button>' +
+                '<button class="mark-btn fail' + (ann.mark === 'fail' ? ' active' : '') + '" onclick="setMark(\\'fail\\')">FAIL</button>' +
+                '<button class="mark-btn unclear' + (!ann.mark ? ' active' : '') + '" onclick="setMark(null)">UNCLEAR</button>' +
+                '</div>';
+
+            const failMode = ann.mark === 'fail';
+            let evalHtml = '<div class="case-evaluation' + (failMode ? ' fail-mode' : '') + '">';
+            evalHtml += '<h4>Evaluation' + (failMode ? ' - Fail Reason' : ' - Pass Reason') + '</h4>';
+            evalHtml += '<div class="rating-section">';
+            const dims = [
+                { key: 'correctness', label: 'Correctness', primary: true },
+                { key: 'difficulty', label: 'Difficulty', primary: false },
+                { key: 'knowledge_richness', label: 'Knowledge Richness', primary: false },
+                { key: 'task_value', label: 'Task Value', primary: false }
+            ];
+            dims.forEach(d => {
+                evalHtml += '<div class="rating-item"><label>' + d.label;
+                if (d.primary) evalHtml += ' <span class="label-primary">Primary</span>';
+                evalHtml += '</label><div class="rating-stars">';
+                for (let n = 1; n <= 5; n++) {
+                    evalHtml += '<button class="rating-star' + ((scores[d.key] || 0) >= n ? ' active' : '') + '" onclick="setCaseRating(\\'' + d.key + '\\',' + n + ')">' + n + '</button>';
+                }
+                evalHtml += '</div></div>';
+            });
+            evalHtml += '</div>';
+            evalHtml += '<textarea class="pass-reason-input" id="pass-reason" placeholder="' +
+                (failMode ? 'Describe why failed...' : 'Describe why passed...') +
+                '" onchange="updatePassReason(this.value)">' + (ann.pass_reason || '') + '</textarea>';
+            evalHtml += '</div>';
+            document.getElementById('evaluationPanel').innerHTML = evalHtml;
+            } // end if not annotator mode
+
+            // Knowledge panel (visible to both reviewer and annotator)
+            let kHtml = '<div class="knowledge-panel">';
+            kHtml += '<h4>Knowledge Points & Apps</h4>';
+            kHtml += '<div class="knowledge-section">';
+            const fields = [
+                { key: 'osworld_overlap', label: 'OSWorld Overlap', inputId: 'osworld-input' },
+                { key: 'custom_nodes', label: 'Custom Nodes', inputId: 'custom-input' },
+                { key: 'related_apps', label: 'Related Apps', inputId: 'apps-input' }
+            ];
+            fields.forEach(f => {
+                const tags = ann[f.key] || [];
+                kHtml += '<div class="knowledge-item"><label>' + f.label + '</label>';
+                kHtml += '<div class="knowledge-tags">';
+                tags.forEach(tag => {
+                    kHtml += '<span class="knowledge-tag">' + tag + '<span class="remove-tag" onclick="removeTag(\\'' + f.key + '\\',\\'' + tag.replace(/'/g, "\\\\'") + '\\')">x</span></span>';
+                });
+                kHtml += '</div>';
+                kHtml += '<div class="knowledge-input-row">';
+                kHtml += '<input type="text" class="knowledge-input" id="' + f.inputId + '" placeholder="Add...">';
+                kHtml += '<button class="knowledge-add-btn" onclick="addTag(\\'' + f.key + '\\',\\'' + f.inputId + '\\')">+</button>';
+                kHtml += '</div></div>';
+            });
+            kHtml += '</div>';
+            kHtml += '<label style="color:#888;font-size:0.8em;display:block;margin-bottom:3px;">Step-by-Step Instructions:</label>';
+            kHtml += '<textarea class="step-instructions-input" id="step-instructions" placeholder="Step-by-step instructions..." onchange="updateStepInstructions(this.value)">' + (ann.step_by_step_instructions || '') + '</textarea>';
+            kHtml += '</div>';
+            document.getElementById('knowledgePanel').innerHTML = kHtml;
+        }
+
+        // ========== Annotation actions ==========
+
+        async function setMark(mark) {
+            annotation.mark = mark;
+            await saveOssAnnotation();
+            renderAnnotationPanels();
+            if (mark === 'pass') reviewStatus = 'reviewed';
+            else if (mark === 'fail') reviewStatus = 'rejected';
+            else reviewStatus = 'unreviewed';
+            updateReviewUI();
+            updateRecSidebarStatus();
+        }
+
+        async function setCaseRating(dim, val) {
+            if (!annotation.scores) annotation.scores = {};
+            annotation.scores[dim] = val;
+            await saveOssAnnotation();
+            renderAnnotationPanels();
+        }
+
+        async function updatePassReason(reason) {
+            annotation.pass_reason = reason;
+            await saveOssAnnotation();
+        }
+
+        async function updateStepInstructions(text) {
+            annotation.step_by_step_instructions = text;
+            await saveOssAnnotation();
+        }
+
+        async function addTag(field, inputId) {
+            const input = document.getElementById(inputId);
+            const value = input.value.trim();
+            if (!value) return;
+            if (!annotation[field]) annotation[field] = [];
+            if (!annotation[field].includes(value)) {
+                annotation[field].push(value);
+                await saveOssAnnotation();
+                renderAnnotationPanels();
+            }
+            input.value = '';
+        }
+
+        async function removeTag(field, value) {
+            if (!annotation[field]) return;
+            const idx = annotation[field].indexOf(value);
+            if (idx > -1) {
+                annotation[field].splice(idx, 1);
+                await saveOssAnnotation();
+                renderAnnotationPanels();
+            }
+        }
+
+        async function saveOssAnnotation() {
+            try {
+                await fetch('/api/oss/annotate', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        folder_name: folderName,
+                        oss_folder: ossFolder,
+                        mark: annotation.mark || null,
+                        scores: annotation.scores || {},
+                        pass_reason: annotation.pass_reason || '',
+                        osworld_overlap: annotation.osworld_overlap || [],
+                        custom_nodes: annotation.custom_nodes || [],
+                        related_apps: annotation.related_apps || [],
+                        step_by_step_instructions: annotation.step_by_step_instructions || ''
+                    })
+                });
+            } catch (err) { console.error('Save failed:', err); }
+        }
+
+        // ========== Step Error Marking (Reviewer) ==========
+
+        async function toggleStepError(stepIdx) {
+            const step = taskData && taskData.steps[stepIdx];
+            if (!step) return;
+            const origIdx = step.original_index != null ? step.original_index : stepIdx;
+            const si = String(origIdx);
+            const isCurrentlyError = !!stepErrors[si];
+
+            if (isCurrentlyError) {
+                delete stepErrors[si];
+            } else {
+                stepErrors[si] = {note: ''};
+            }
+
+            try {
+                await fetch('/api/oss/mark_step_error', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        folder_name: folderName, oss_folder: ossFolder,
+                        step_index: origIdx, is_error: !isCurrentlyError
+                    })
+                });
+            } catch (err) { console.error('Mark error failed:', err); }
+
+            // Update UI in-place
+            updateStepErrorUI(stepIdx);
+            renderStepSidebar();
+            updateReviewProgress();
+        }
+
+        async function saveStepErrorNote(stepIdx, note) {
+            const step = taskData && taskData.steps[stepIdx];
+            if (!step) return;
+            const origIdx = step.original_index != null ? step.original_index : stepIdx;
+            const si = String(origIdx);
+            if (!stepErrors[si]) return;
+            stepErrors[si].note = note;
+
+            try {
+                await fetch('/api/oss/mark_step_error', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        folder_name: folderName, oss_folder: ossFolder,
+                        step_index: origIdx, is_error: true, note: note
+                    })
+                });
+            } catch (err) { console.error('Save error note failed:', err); }
+        }
+
+        async function restoreDeletedSteps() {
+            if (!confirm('Restore all deleted steps?')) return;
+            const deleted = (annotation.deleted_steps || []).slice();
+            for (const origIdx of deleted) {
+                try {
+                    await fetch('/api/oss/undelete_step', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ folder_name: folderName, oss_folder: ossFolder, original_index: origIdx })
+                    });
+                } catch(e) {}
+            }
+            loadTask();
+        }
+
+        async function setAnnotatorStatus(s) {
+            if (annotatorStatus === s) s = 'not_started';
+            annotatorStatus = s;
+            var b1 = document.getElementById('annBtnIP'), b2 = document.getElementById('annBtnDone');
+            if (b1) { b1.style.background = s==='in_progress'?'#ff9800':'transparent'; b1.style.color = s==='in_progress'?'#000':'#ff9800'; }
+            if (b2) { b2.style.background = s==='completed'?'#4caf50':'transparent'; b2.style.color = s==='completed'?'#fff':'#4caf50'; }
+            try { await fetch('/api/oss/set_annotator_status', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({folder_name:folderName,oss_folder:ossFolder,status:s}) }); } catch(e) {}
+        }
+
+        function updateStepErrorUI(stepIdx) {
+            const step = taskData && taskData.steps[stepIdx];
+            if (!step) return;
+            const origIdx = step.original_index != null ? step.original_index : stepIdx;
+            const si = String(origIdx);
+            const isError = !!stepErrors[si];
+
+            // Update stacked card
+            const card = document.getElementById('stacked-step-' + stepIdx);
+            if (card) {
+                card.classList.toggle('has-error', isError);
+                // Update button
+                const btn = card.querySelector('.btn-mark-error');
+                if (btn) {
+                    btn.classList.toggle('marked', isError);
+                    btn.textContent = isError ? 'Unmark Error' : 'Mark Error';
+                }
+                // Update/remove error banner
+                let banner = card.querySelector('.step-error-banner');
+                if (isError && !banner) {
+                    // Insert banner after header
+                    const header = card.querySelector('.stacked-step-header');
+                    if (header) {
+                        banner = document.createElement('div');
+                        banner.className = 'step-error-banner';
+                        banner.innerHTML = '<span class="error-icon">&#9888;</span><div><span class="error-text">Marked as error by reviewer</span>' +
+                            (isAnnotatorMode ? '' : '<input class="step-error-note-input" placeholder="Note for annotator..." value="' + ((stepErrors[si] && stepErrors[si].note) || '').replace(/"/g, '&quot;') + '" onchange="saveStepErrorNote(' + stepIdx + ', this.value)" />') +
+                            '</div>';
+                        header.after(banner);
+                    }
+                } else if (!isError && banner) {
+                    banner.remove();
+                } else if (isError && banner && !isAnnotatorMode) {
+                    const noteInput = banner.querySelector('.step-error-note-input');
+                    if (noteInput) noteInput.value = (stepErrors[si] && stepErrors[si].note) || '';
+                }
+            }
+        }
+
+        function updateReviewProgress() {
+            const steps = taskData ? taskData.steps || [] : [];
+            const totalSteps = steps.length;
+            const errorCount = Object.keys(stepErrors).length;
+            // Count "reviewed" as steps that have been explicitly checked (either marked error or have AI result)
+            // For the reviewer progress, we track how many steps they have reviewed by looking at steps with any AI result or error mark
+            const reviewedCount = steps.filter((s, i) => {
+                const origIdx = s.original_index != null ? s.original_index : i;
+                return !!stepErrors[String(origIdx)] || !!getAiStepResult(origIdx);
+            }).length;
+
+            const pct = totalSteps > 0 ? Math.round((reviewedCount / totalSteps) * 100) : 0;
+            document.getElementById('reviewProgressText').innerHTML =
+                'Errors: <b style="color:#f44336">' + errorCount + '</b> | Reviewed: ' + reviewedCount + '/' + totalSteps;
+            document.getElementById('reviewProgressFill').style.width = pct + '%';
+            document.getElementById('reviewProgressContainer').style.display = 'flex';
+        }
+
+        function updateRecSidebarStatus() {
+            // Update the recording sidebar to reflect new status
+            const rec = allRecordings.find(r => r.folder_name === folderName);
+            if (rec) {
+                rec.review_status = reviewStatus;
+                renderRecordingSidebar();
+            }
+        }
+
+        // ========== Editable fields ==========
+
+        async function saveJustification(stepIdx, value) {
+            // Update local data and use original_index for overlay reference
+            const step = taskData && taskData.steps[stepIdx];
+            if (step) {
+                step.justification = value;
+                const origIdx = step.original_index != null ? step.original_index : stepIdx;
+                try {
+                    await fetch('/api/oss/update_justification', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            folder_name: folderName, oss_folder: ossFolder,
+                            step_index: origIdx, justification: value
+                        })
+                    });
+                } catch (err) { console.error('Save justification failed:', err); }
+            }
+        }
+
+        function codeToDescription(code) {
+            // Reverse-map pyautogui code to human-readable description
+            var m;
+            m = code.match(/pyautogui\.write\(['"](.*?)['"]\)/);
+            if (m) return '\u2328\ufe0f Type: ' + m[1];
+            m = code.match(/pyautogui\.hotkey\((.+)\)/);
+            if (m) return '\u2328\ufe0f Press: ' + m[1].replace(/['"]/g,'').replace(/,\s*/g,' + ');
+            m = code.match(/pyautogui\.press\(['"](.*?)['"]\)/);
+            if (m) return '\u2328\ufe0f Press: ' + m[1];
+            m = code.match(/pyautogui\.moveTo\((\d+),\s*(\d+)\).*dragTo\((\d+),\s*(\d+)\)/);
+            if (m) return 'Drag from (' + m[1] + ', ' + m[2] + ') to (' + m[3] + ', ' + m[4] + ')';
+            m = code.match(/pyautogui\.doubleClick\((\d+),\s*(\d+)\)/);
+            if (m) return 'Double left Click at (' + m[1] + ', ' + m[2] + ')';
+            m = code.match(/pyautogui\.rightClick\((\d+),\s*(\d+)\)/);
+            if (m) return 'Right Click at (' + m[1] + ', ' + m[2] + ')';
+            m = code.match(/pyautogui\.click\((\d+),\s*(\d+)\)/);
+            if (m) return 'Single left Click at (' + m[1] + ', ' + m[2] + ')';
+            m = code.match(/pyautogui\.scroll\((-?\d+)\)/);
+            if (m) { var n = parseInt(m[1]); return n < 0 ? '\u2b07\ufe0f\u00d7' + Math.abs(n) + ' Scroll Down' : '\u2b06\ufe0f\u00d7' + n + ' Scroll Up'; }
+            return code;
+        }
+
+        async function saveCode(stepIdx, value) {
+            const step = taskData && taskData.steps[stepIdx];
+            if (step) {
+                step.code = value;
+                // Sync description from code
+                step.description = codeToDescription(value);
+                // Update description display in stacked view
+                var card = document.getElementById('stacked-step-' + stepIdx);
+                if (card) {
+                    var descEl = card.querySelector('.description');
+                    if (descEl) descEl.textContent = step.description;
+                }
+                const origIdx = step.original_index != null ? step.original_index : stepIdx;
+                try {
+                    await fetch('/api/oss/update_code', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            folder_name: folderName, oss_folder: ossFolder,
+                            step_index: origIdx, code: value
+                        })
+                    });
+                } catch (err) { console.error('Save code failed:', err); }
+            }
+        }
+
+        let _frameShiftTimer = null;
+        function shiftFrame(stepIdx, delta) {
+            const step = taskData && taskData.steps[stepIdx];
+            if (!step) return;
+            step.video_time = Math.max(0, step.video_time + delta);
+            const origIdx = step.original_index != null ? step.original_index : stepIdx;
+            const newUrl = '/oss_frame/' + encodeURIComponent(folderName) + '/' + step.video_time + '?folder=' + encodeURIComponent(ossFolder);
+
+            // Update stacked view image
+            const stackedImg = document.getElementById('stacked-img-el-' + stepIdx);
+            if (stackedImg) {
+                stackedImg.src = newUrl;
+                // Re-add markers after image loads
+                stackedImg.onload = function() {
+                    const videoWidth = taskData.video_width || 1920;
+                    const videoHeight = taskData.video_height || 1080;
+                    addMarkersToContainer('stacked-img-' + stepIdx, stackedImg, step, videoWidth, videoHeight);
+                };
+            }
+            // Update detail overlay image
+            const detailImg = document.getElementById('detailImg');
+            if (detailImg && detailStepIdx === stepIdx) detailImg.src = newUrl;
+
+            // Update time displays
+            const stackedTime = document.getElementById('frame-time-' + stepIdx);
+            if (stackedTime) stackedTime.textContent = 't=' + step.video_time.toFixed(2) + 's';
+            const detailTime = document.getElementById('detail-frame-time');
+            if (detailTime && detailStepIdx === stepIdx) detailTime.textContent = 't=' + step.video_time.toFixed(2) + 's';
+
+            // Debounced save
+            clearTimeout(_frameShiftTimer);
+            _frameShiftTimer = setTimeout(async () => {
+                try {
+                    await fetch('/api/oss/update_video_time', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            folder_name: folderName, oss_folder: ossFolder,
+                            step_index: origIdx, video_time: step.video_time
+                        })
+                    });
+                } catch (err) { console.error('Save video time failed:', err); }
+            }, 300);
+        }
+
+        async function saveQuery(value) {
+            try {
+                await fetch('/api/oss/update_query', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        folder_name: folderName, oss_folder: ossFolder, query: value
+                    })
+                });
+                if (taskData && taskData.annotator_info) taskData.annotator_info.query = value;
+            } catch (err) { console.error('Save query failed:', err); }
+        }
+
+        // ========== Delete step ==========
+
+        let deleteConfirmStep = null;
+        function confirmDeleteStep(stepIdx) {
+            // Find the correct delete button for this step
+            var card = document.getElementById('stacked-step-' + stepIdx);
+            var btn = card ? card.querySelector('.delete-step-btn') : null;
+            // Also check detail overlay
+            if (!btn && document.getElementById('detailOverlay').classList.contains('show')) {
+                btn = document.querySelector('#detailOverlayBody .delete-step-btn');
+            }
+
+            if (deleteConfirmStep === stepIdx) {
+                doDeleteStep(stepIdx);
+                deleteConfirmStep = null;
+            } else {
+                deleteConfirmStep = stepIdx;
+                if (btn) {
+                    btn.textContent = 'CONFIRM DELETE?';
+                    btn.style.background = '#f44336';
+                    btn.style.color = '#fff';
+                }
+                setTimeout(() => {
+                    if (deleteConfirmStep === stepIdx) {
+                        deleteConfirmStep = null;
+                        if (btn) {
+                            btn.textContent = 'Delete';
+                            btn.style.background = '';
+                            btn.style.color = '';
+                        }
+                    }
+                }, 3000);
+            }
+        }
+
+        async function doDeleteStep(stepIdx) {
+            // Use original_index for the overlay reference (not display index)
+            const step = taskData && taskData.steps[stepIdx];
+            if (!step) return;
+            const origIdx = step.original_index != null ? step.original_index : stepIdx;
+            try {
+                await fetch('/api/oss/delete_step', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        folder_name: folderName, oss_folder: ossFolder, original_index: origIdx
+                    })
+                });
+                // Remove step from local display data
+                if (taskData && taskData.steps) {
+                    taskData.steps.splice(stepIdx, 1);
+                    // Re-index for display (keep original_index intact)
+                    taskData.steps.forEach((s, i) => { s.index = i; });
+                    if (currentStep >= taskData.steps.length) currentStep = Math.max(0, taskData.steps.length - 1);
+                    renderStepSidebar();
+                    // Close detail overlay if open
+                    if (document.getElementById('detailOverlay').classList.contains('show')) {
+                        closeDetail();
+                    }
+                    if (taskData.steps.length > 0) {
+                        if (viewMode === 'single') renderAllStepsStacked();
+                        if (viewMode === 'grid') renderGrid();
+                    } else {
+                        document.getElementById('stepsStacked').innerHTML = '<div style="padding:20px;color:#888;">No steps remaining</div>';
+                    }
+                }
+            } catch (err) { console.error('Delete step failed:', err); }
+        }
+
+        // ========== Export ==========
+
+        async function exportCase() {
+            const btn = document.querySelector('.export-case-btn');
+            if (btn) { btn.textContent = 'Exporting...'; btn.disabled = true; }
+            try {
+                const url = '/api/oss/export_case/' + encodeURIComponent(folderName) + '?folder=' + encodeURIComponent(ossFolder);
+                const resp = await fetch(url);
+                if (!resp.ok) {
+                    const errData = await resp.json().catch(() => ({}));
+                    alert('Export failed: ' + (errData.error || resp.statusText));
+                    return;
+                }
+                const blob = await resp.blob();
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = folderName + '.zip';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(a.href);
+                alert('Export downloaded successfully!');
+            } catch (err) {
+                alert('Export failed: ' + err.message);
+            } finally {
+                if (btn) { btn.textContent = 'Export'; btn.disabled = false; }
+            }
+        }
+
+        // ========== Reset to Original ==========
+
+        let resetConfirmed = false;
+        function confirmResetCase() {
+            const btn = document.querySelector('.btn-reset');
+            if (resetConfirmed) {
+                // Second click - actually reset
+                doResetCase();
+                resetConfirmed = false;
+                if (btn) { btn.textContent = 'Reset to Original'; btn.classList.remove('confirming'); }
+            } else {
+                // First click - ask for confirmation
+                resetConfirmed = true;
+                if (btn) { btn.textContent = 'CONFIRM RESET?'; btn.classList.add('confirming'); }
+                setTimeout(() => {
+                    if (resetConfirmed) {
+                        resetConfirmed = false;
+                        if (btn) { btn.textContent = 'Reset to Original'; btn.classList.remove('confirming'); }
+                    }
+                }, 3000);
+            }
+        }
+
+        async function doResetCase() {
+            try {
+                await fetch('/api/oss/reset_case', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ folder_name: folderName, oss_folder: ossFolder })
+                });
+                // Reload everything fresh from OSS
+                taskData = null;
+                currentStep = 0;
+                finetuneActive = false;
+                annotation = {};
+                coordAdjustments = {};
+                reviewStatus = 'unreviewed';
+                // Reset AI check state
+                if (aiCheckPolling) { clearInterval(aiCheckPolling); aiCheckPolling = null; }
+                aiCheckResults = null;
+                aiCheckStartTime = null;
+                showAiProgress(false);
+                document.getElementById('aiCheckBtn').classList.remove('running');
+                document.getElementById('aiCheckBtn').textContent = 'AI Check';
+                document.getElementById('aiCheckStatus').textContent = '';
+                updateReviewUI();
+                document.getElementById('loadingOverlay').style.display = 'flex';
+                await loadTask();
+                loadRecordingSidebar();
+            } catch (err) { console.error('Reset failed:', err); }
+        }
+
+        // ========== Coordinate fine-tuning ==========
+
+        function toggleFinetune() {
+            finetuneActive = !finetuneActive;
+            const panel = document.getElementById('finetune-panel');
+            if (panel) panel.classList.toggle('show', finetuneActive);
+        }
+
+        function updateMarkerPreview() {
+            const xInput = document.getElementById('coord-x');
+            const yInput = document.getElementById('coord-y');
+            const marker = document.getElementById('coordMarker');
+            const img = document.getElementById('screenshot');
+            if (!xInput || !yInput || !marker || !img) return;
+            const x = parseInt(xInput.value) || 0;
+            const y = parseInt(yInput.value) || 0;
+            const scaleX = img.clientWidth / window._videoDims.width;
+            const scaleY = img.clientHeight / window._videoDims.height;
+            marker.style.left = (x * scaleX) + 'px';
+            marker.style.top = (y * scaleY) + 'px';
+            const step = taskData.steps[currentStep];
+            marker.setAttribute('data-label', step.action + ' (' + x + ',' + y + ')');
+            const cd = document.getElementById('coord-display');
+            if (cd) cd.textContent = '(' + x + ', ' + y + ')';
+        }
+
+        async function saveCoordinate() {
+            const xInput = document.getElementById('coord-x');
+            const yInput = document.getElementById('coord-y');
+            if (!xInput || !yInput) return;
+            const x = parseInt(xInput.value) || 0;
+            const y = parseInt(yInput.value) || 0;
+            const step = taskData.steps[currentStep];
+            const origIdx = step.original_index != null ? step.original_index : currentStep;
+            let origX, origY;
+            const adj = coordAdjustments[String(origIdx)];
+            if (adj && adj.original) { origX = adj.original.x; origY = adj.original.y; }
+            else { origX = window._origCoords.x; origY = window._origCoords.y; }
+
+            await fetch('/api/oss/update_coordinate', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    folder_name: folderName, oss_folder: ossFolder,
+                    step_index: origIdx, x: x, y: y,
+                    original_x: origX, original_y: origY
+                })
+            });
+            coordAdjustments[String(origIdx)] = { x: x, y: y, original: { x: origX, y: origY } };
+            step.coordinate = { x: x, y: y };
+            if (step.action === 'click') {
+                if (step.code.includes('doubleClick')) step.code = 'pyautogui.doubleClick(' + x + ', ' + y + ')';
+                else if (step.code.includes('rightClick')) step.code = 'pyautogui.rightClick(' + x + ', ' + y + ')';
+                else if (step.code.includes('clicks=3')) step.code = 'pyautogui.click(' + x + ', ' + y + ', clicks=3)';
+                else step.code = 'pyautogui.click(' + x + ', ' + y + ')';
+            }
+            finetuneActive = false;
+            renderStep(currentStep);
+        }
+
+        function cancelFinetune() { finetuneActive = false; renderStep(currentStep); }
+
+        function handleImageClick(event) {
+            if (!finetuneActive) return;
+            const img = document.getElementById('screenshot');
+            const rect = img.getBoundingClientRect();
+            const scaleX = img.clientWidth / window._videoDims.width;
+            const scaleY = img.clientHeight / window._videoDims.height;
+            const x = Math.max(0, Math.min(window._videoDims.width, Math.round((event.clientX - rect.left) / scaleX)));
+            const y = Math.max(0, Math.min(window._videoDims.height, Math.round((event.clientY - rect.top) / scaleY)));
+            const xInput = document.getElementById('coord-x');
+            const yInput = document.getElementById('coord-y');
+            if (xInput) xInput.value = x;
+            if (yInput) yInput.value = y;
+            updateMarkerPreview();
+        }
+
+        // ========== AI Check ==========
+
+        let aiCheckResults = null; // { status, steps: { origIdx: {...} }, ... }
+        let aiCheckPolling = null;
+        let aiCheckStartTime = null;
+
+        function showAiProgress(show) {
+            document.getElementById('aiProgressOverlay').classList.toggle('show', show);
+        }
+
+        function updateAiProgress(progress, total, steps) {
+            const pct = total > 0 ? Math.round(progress / total * 100) : 0;
+            document.getElementById('aiProgressPct').textContent = pct + '%';
+            document.getElementById('aiProgressFill').style.width = pct + '%';
+            document.getElementById('aiProgressSteps').textContent = 'Step ' + progress + ' / ' + total;
+
+            // ETA calculation
+            if (aiCheckStartTime && progress > 0) {
+                const elapsed = (Date.now() - aiCheckStartTime) / 1000;
+                const perStep = elapsed / progress;
+                const remaining = Math.round(perStep * (total - progress));
+                if (remaining > 60) {
+                    document.getElementById('aiProgressEta').textContent = 'Est. ' + Math.ceil(remaining / 60) + ' min remaining';
+                } else if (remaining > 0) {
+                    document.getElementById('aiProgressEta').textContent = 'Est. ' + remaining + 's remaining';
+                } else {
+                    document.getElementById('aiProgressEta').textContent = 'Almost done...';
+                }
+            } else {
+                document.getElementById('aiProgressEta').textContent = 'Estimating...';
+            }
+
+            // Live issue counter
+            let issues = 0, ok = 0;
+            if (steps) {
+                Object.values(steps).forEach(s => {
+                    if (s.correctness === 'wrong' || s.correctness === 'redundant' || s.correctness === 'suspicious') issues++;
+                    else if (s.correctness === 'correct') ok++;
+                    if (s.justification_quality === 'poor' || s.justification_quality === 'missing') issues++;
+                });
+            }
+            const issuesDiv = document.getElementById('aiProgressIssues');
+            if (progress > 0) {
+                issuesDiv.innerHTML = '<span class="ok-count">' + ok + '</span> steps OK &nbsp;&middot;&nbsp; <span class="issue-count">' + issues + '</span> issues found so far';
+            } else {
+                issuesDiv.innerHTML = '';
+            }
+        }
+
+        function startAiCheck(force) {
+            const btn = document.getElementById('aiCheckBtn');
+            btn.classList.add('running');
+            btn.textContent = 'Checking...';
+            document.getElementById('aiCheckStatus').textContent = '';
+            aiCheckStartTime = Date.now();
+
+            fetch('/api/oss/ai_check', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    folder_name: folderName, oss_folder: ossFolder, force: !!force
+                })
+            }).then(r => r.json()).then(data => {
+                if (data.status === 'already_completed' && !force) {
+                    aiCheckResults = data.results;
+                    onAiCheckComplete();
+                    return;
+                }
+                // Show overlay and start polling
+                showAiProgress(true);
+                updateAiProgress(0, data.total || 0, null);
+                document.getElementById('aiProgressSubtitle').textContent =
+                    'Analyzing ' + (data.total || '?') + ' steps with Gemini (sequential, with annotated screenshots)...';
+                aiCheckPolling = setInterval(pollAiCheck, 1500);
+            }).catch(err => {
+                btn.classList.remove('running');
+                btn.textContent = 'AI Check';
+                document.getElementById('aiCheckStatus').textContent = 'Error: ' + err.message;
+            });
+        }
+
+        function pollAiCheck() {
+            fetch('/api/oss/ai_check_status?folder_name=' + encodeURIComponent(folderName) + '&folder=' + encodeURIComponent(ossFolder))
+            .then(r => r.json()).then(data => {
+                if (data.status === 'running') {
+                    updateAiProgress(data.progress, data.total, data.steps);
+                    // Update partial results live
+                    if (data.steps) {
+                        if (!aiCheckResults) aiCheckResults = { status: 'running', steps: {} };
+                        aiCheckResults.steps = data.steps;
+                        refreshAiDisplay();
+                    }
+                } else if (data.status === 'completed') {
+                    clearInterval(aiCheckPolling);
+                    aiCheckPolling = null;
+                    aiCheckResults = data;
+                    onAiCheckComplete();
+                } else if (data.status === 'failed') {
+                    clearInterval(aiCheckPolling);
+                    aiCheckPolling = null;
+                    showAiProgress(false);
+                    document.getElementById('aiCheckBtn').classList.remove('running');
+                    document.getElementById('aiCheckBtn').textContent = 'AI Check (Failed)';
+                    document.getElementById('aiCheckStatus').textContent = data.error || 'Check failed';
+                }
+            });
+        }
+
+        function onAiCheckComplete() {
+            showAiProgress(false);
+            const btn = document.getElementById('aiCheckBtn');
+            btn.classList.remove('running');
+            btn.textContent = 'AI Check \u2713';
+            // Count issues
+            let issues = 0;
+            const steps = (aiCheckResults && aiCheckResults.steps) || {};
+            Object.values(steps).forEach(s => {
+                if (s.correctness === 'wrong' || s.correctness === 'redundant' || s.correctness === 'suspicious') issues++;
+                if (s.justification_quality === 'poor' || s.justification_quality === 'missing') issues++;
+            });
+            document.getElementById('aiCheckStatus').textContent = issues > 0 ? issues + ' issues found' : 'All OK';
+            document.getElementById('aiCheckStatus').style.color = issues > 0 ? '#ff9800' : '#4caf50';
+            refreshAiDisplay();
+            updateReviewProgress();
+        }
+
+        function refreshAiDisplay() {
+            // Re-render current view to show AI results
+            if (viewMode === 'single') {
+                renderStep(currentStep);
+            } else {
+                renderGrid();
+            }
+            renderStepSidebar();
+        }
+
+        function getAiStepResult(origIdx) {
+            if (!aiCheckResults || !aiCheckResults.steps) return null;
+            return aiCheckResults.steps[String(origIdx)] || null;
+        }
+
+        function renderAiResultHtml(origIdx) {
+            const r = getAiStepResult(origIdx);
+            if (!r) return '';
+
+            const ccls = {correct:'ai-correct', wrong:'ai-wrong', redundant:'ai-redundant', suspicious:'ai-suspicious'}[r.correctness] || 'ai-unknown';
+            const qcls = {good:'ai-good', acceptable:'ai-acceptable', poor:'ai-poor', missing:'ai-missing'}[r.justification_quality] || 'ai-unknown';
+
+            let html = '<div class="ai-result">';
+            html += '<div class="ai-badges">';
+            html += '<span class="ai-badge ' + ccls + '">AI: ' + (r.correctness || 'unknown').toUpperCase() + '</span>';
+            html += '<span class="ai-badge ' + qcls + '">Justification: ' + (r.justification_quality || 'unknown').toUpperCase() + '</span>';
+            if (r.flags && r.flags.length > 0) {
+                r.flags.forEach(function(f) { html += '<span class="ai-flag">' + f + '</span>'; });
+            }
+            html += '</div>';
+            // Correctness reason (short verdict)
+            if (r.correctness_reason) {
+                html += '<div class="ai-reason"><b>\u5224\u5b9a\u7ed3\u679c (Verdict):</b> ' + r.correctness_reason + '</div>';
+            }
+            // AI reasoning (detailed analysis)
+            if (r.reasoning) {
+                html += '<div class="ai-reasoning"><b>AI \u5206\u6790:</b> ' + r.reasoning + '</div>';
+            }
+            if (r.justification_issues && r.justification_issues.length > 0) {
+                html += '<div class="ai-issues">';
+                r.justification_issues.forEach(function(issue) { html += '<div class="ai-issue">\u2022 ' + issue + '</div>'; });
+                html += '</div>';
+            }
+            if (r.rewritten_justification) {
+                const isMissing = r.justification_quality === 'missing';
+                html += '<div class="ai-rewrite"><label>' + (isMissing ? 'AI Written Justification (original was empty):' : 'AI Suggested Rewrite:') + '</label>';
+                html += '<div class="ai-rewrite-text">' + r.rewritten_justification + '</div>';
+                html += '<button class="ai-apply-btn" onclick="applyAiRewrite(' + origIdx + ')">' + (isMissing ? 'Apply AI Justification' : 'Apply This') + '</button>';
+                html += '</div>';
+            }
+            html += '</div>';
+            return html;
+        }
+
+        function applyAiRewrite(origIdx) {
+            const r = getAiStepResult(origIdx);
+            if (!r || !r.rewritten_justification) return;
+            // Find the step by original_index
+            const steps = taskData ? taskData.steps || [] : [];
+            const stepIdx = steps.findIndex(s => (s.original_index != null ? s.original_index : s.index) === origIdx);
+            if (stepIdx < 0) return;
+            steps[stepIdx].justification = r.rewritten_justification;
+            saveJustification(stepIdx, r.rewritten_justification);
+
+            // Update in-place: find the stacked step card's justification textarea
+            const card = document.getElementById('stacked-step-' + stepIdx);
+            if (card) {
+                const textarea = card.querySelector('.justification-input');
+                if (textarea) textarea.value = r.rewritten_justification;
+                // Replace the apply button with "Adopted" badge
+                const applyBtn = card.querySelector('.ai-apply-btn');
+                if (applyBtn) {
+                    applyBtn.textContent = 'Adopted';
+                    applyBtn.disabled = true;
+                    applyBtn.style.background = '#4caf50';
+                    applyBtn.style.cursor = 'default';
+                }
+            }
+
+            // Also update detail overlay if open
+            if (document.getElementById('detailOverlay').classList.contains('show') && detailStepIdx === stepIdx) {
+                const detailTextarea = document.querySelector('#detailOverlayBody .justification-input');
+                if (detailTextarea) detailTextarea.value = r.rewritten_justification;
+                const detailBtn = document.querySelector('#detailOverlayBody .ai-apply-btn');
+                if (detailBtn) {
+                    detailBtn.textContent = 'Adopted';
+                    detailBtn.disabled = true;
+                    detailBtn.style.background = '#4caf50';
+                    detailBtn.style.cursor = 'default';
+                }
+            }
+        }
+
+        // ========== Navigation ==========
+
+        function prevStep() { if (currentStep > 0) selectStep(currentStep - 1); }
+        function nextStep() { if (taskData && currentStep < taskData.steps.length - 1) selectStep(currentStep + 1); }
+
+        function updateReviewUI() {
+            document.getElementById('reviewStatus').textContent = reviewStatus;
+            document.getElementById('reviewStatus').style.color =
+                reviewStatus === 'reviewed' ? '#4caf50' :
+                reviewStatus === 'rejected' ? '#f44336' : '#888';
+            ['reviewed', 'rejected', 'unreviewed'].forEach(s => {
+                const btn = document.getElementById('btn' + s.charAt(0).toUpperCase() + s.slice(1));
+                if (btn) btn.classList.toggle('active', reviewStatus === s);
+            });
+        }
+
+        async function setReview(status) {
+            reviewStatus = status;
+            updateReviewUI();
+            updateRecSidebarStatus();
+            try {
+                await fetch('/api/oss/review', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ folder_name: folderName, oss_folder: ossFolder, status: status })
+                });
+            } catch (err) { console.error('Save failed:', err); }
+        }
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function(e) {
+            if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+            // Esc closes detail overlay
+            if (e.key === 'Escape' && document.getElementById('detailOverlay').classList.contains('show')) {
+                closeDetail();
+                return;
+            }
+            // Arrow keys in detail overlay navigate steps
+            if (document.getElementById('detailOverlay').classList.contains('show')) {
+                if (e.key === 'ArrowLeft') detailPrev();
+                if (e.key === 'ArrowRight') detailNext();
+                return;
+            }
+            if (e.key === 'ArrowLeft') prevStep();
+            if (e.key === 'ArrowRight') nextStep();
+            // 'g' toggles grid view
+            if (e.key === 'g') setViewMode(viewMode === 'grid' ? 'single' : 'grid');
+            if (currentMode === 'annotation') {
+                if (e.key === '1') setMark('pass');
+                if (e.key === '2') setMark('fail');
+                if (e.key === '3') setMark(null);
+            }
+        });
+
+        // ========== Init ==========
+        // Hide page size selector by default (shown when grid mode is selected)
+        document.getElementById('pageSizeSelect').style.display = 'none';
+        if (!directMode) loadRecordingSidebar();
+        loadTask();
+    </script>
+</body>
+</html>

@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Annotator Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a14;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            padding: 16px 24px;
+            border-bottom: 2px solid #ff9800;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .header h1 { font-size: 1.3em; color: #ff9800; }
+        .header-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .header-form input {
+            padding: 8px 12px;
+            border: 1px solid #444;
+            border-radius: 6px;
+            background: #0d1117;
+            color: #e0e0e0;
+            font-size: 0.9em;
+            width: 220px;
+        }
+        .header-form input:focus { border-color: #ff9800; outline: none; }
+        .header-form button {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 6px;
+            background: #ff9800;
+            color: #000;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .header-form button:hover { background: #ffb74d; }
+        .header-form button:disabled { background: #555; color: #888; cursor: not-allowed; }
+        .back-link { color: #888; text-decoration: none; font-size: 0.85em; border: 1px solid #555; padding: 5px 12px; border-radius: 4px; }
+        .back-link:hover { color: #ff9800; border-color: #ff9800; }
+        .content { max-width: 1200px; margin: 20px auto; padding: 0 20px; }
+        .summary-bar {
+            display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap;
+        }
+        .summary-stat {
+            background: #16213e; border-radius: 8px; padding: 12px 20px;
+            border: 1px solid #252542; text-align: center; min-width: 120px;
+        }
+        .summary-stat .num { font-size: 1.6em; font-weight: bold; color: #00d9ff; }
+        .summary-stat .label { font-size: 0.75em; color: #888; margin-top: 2px; }
+        .task-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+            gap: 12px;
+        }
+        .task-card {
+            background: #16213e;
+            border: 1px solid #252542;
+            border-radius: 8px;
+            padding: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .task-card:hover { border-color: #ff9800; transform: translateY(-2px); box-shadow: 0 4px 15px rgba(255,152,0,0.15); }
+        .task-card.has-errors { border-left: 3px solid #f44336; }
+        .task-card .task-title { color: #e0e0e0; font-weight: bold; font-size: 0.9em; word-break: break-all; }
+        .task-card .task-query { color: #888; font-size: 0.8em; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .task-card .task-badges { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+        .task-card .badge {
+            padding: 2px 8px; border-radius: 10px; font-size: 0.72em; font-weight: bold;
+        }
+        .badge.reviewed { background: rgba(76,175,80,0.2); color: #4caf50; }
+        .badge.rejected { background: rgba(244,67,54,0.2); color: #f44336; }
+        .badge.unreviewed { background: rgba(136,136,136,0.2); color: #888; }
+        .badge.errors { background: rgba(244,67,54,0.2); color: #f44336; }
+        .badge.ai { background: rgba(156,39,176,0.2); color: #ce93d8; }
+        .badge.corrected { background: rgba(33,150,243,0.2); color: #42a5f5; }
+        .error-msg { color: #f44336; text-align: center; padding: 20px; }
+        .loading { color: #888; text-align: center; padding: 40px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Annotator Dashboard</h1>
+        <div class="header-form">
+            <input type="text" id="ossFolder" placeholder="OSS Folder (e.g. recordings_0303)" />
+            <input type="text" id="username" placeholder="Your username" />
+            <button id="loadBtn" onclick="loadTasks()">Load My Tasks</button>
+            <button id="refreshBtn" style="background:#555;display:none;" onclick="loadTasks(true)">Refresh</button>
+        </div>
+        <a class="back-link" href="/logout">Logout</a>
+    </div>
+    <div class="content">
+        <div id="summaryBar" class="summary-bar" style="display:none;"></div>
+        <div id="taskGrid" class="task-grid">
+            <div class="loading">Enter your OSS folder and username, then click "Load My Tasks"</div>
+        </div>
+    </div>
+
+    <script>
+        // Auto-fill from URL params
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('folder')) document.getElementById('ossFolder').value = params.get('folder');
+        if (params.get('user')) document.getElementById('username').value = params.get('user');
+
+        // Auto-load if both params present
+        if (params.get('folder') && params.get('user')) loadTasks();
+
+        async function loadTasks(forceRefresh) {
+            const folder = document.getElementById('ossFolder').value.trim();
+            const user = document.getElementById('username').value.trim();
+            if (!folder || !user) { alert('Both fields required'); return; }
+
+            const btn = document.getElementById('loadBtn');
+            btn.disabled = true;
+            btn.textContent = 'Loading...';
+            document.getElementById('taskGrid').innerHTML = '<div class="loading">Loading your tasks...</div>';
+
+            try {
+                const resp = await fetch('/api/oss/annotator_tasks?folder=' + encodeURIComponent(folder) + '&user=' + encodeURIComponent(user) + (forceRefresh ? '&refresh=1' : ''));
+                const data = await resp.json();
+
+                if (data.error) {
+                    document.getElementById('taskGrid').innerHTML = '<div class="error-msg">' + data.error + '</div>';
+                    document.getElementById('summaryBar').style.display = 'none';
+                    return;
+                }
+
+                const recs = data.recordings || [];
+                // Update URL
+                history.replaceState(null, '', '/annotator_dashboard?folder=' + encodeURIComponent(folder) + '&user=' + encodeURIComponent(user));
+
+                // Summary
+                const total = recs.length;
+                const reviewed = recs.filter(r => r.review_status === 'reviewed').length;
+                const rejected = recs.filter(r => r.review_status === 'rejected').length;
+                const withErrors = recs.filter(r => r.error_count > 0).length;
+                const withAi = recs.filter(r => r.has_ai_results).length;
+                let summaryHtml = '';
+                summaryHtml += '<div class="summary-stat"><div class="num">' + total + '</div><div class="label">Total Tasks</div></div>';
+                summaryHtml += '<div class="summary-stat"><div class="num" style="color:#4caf50">' + reviewed + '</div><div class="label">Reviewed</div></div>';
+                summaryHtml += '<div class="summary-stat"><div class="num" style="color:#f44336">' + rejected + '</div><div class="label">Rejected</div></div>';
+                summaryHtml += '<div class="summary-stat"><div class="num" style="color:#ff9800">' + withErrors + '</div><div class="label">With Errors</div></div>';
+                if (withAi > 0) summaryHtml += '<div class="summary-stat"><div class="num" style="color:#ce93d8">' + withAi + '</div><div class="label">AI Checked</div></div>';
+                document.getElementById('summaryBar').innerHTML = summaryHtml;
+                document.getElementById('summaryBar').style.display = 'flex';
+
+                // Task cards - group by version, show newest first
+                function getBase(tid) {
+                    const m = tid.match(/^(.+)_(\d{3})$/);
+                    return m ? { base: m[1], ver: parseInt(m[2]) } : { base: tid, ver: -1 };
+                }
+                const groups = {};
+                recs.forEach(rec => {
+                    const tid = rec.task_name || rec.task_id || rec.folder_name;
+                    const p = getBase(tid);
+                    if (!groups[p.base]) groups[p.base] = [];
+                    groups[p.base].push({ rec, ver: p.ver });
+                });
+
+                let gridHtml = '';
+                Object.keys(groups).sort().forEach(base => {
+                    const vers = groups[base];
+                    vers.sort((a, b) => b.ver - a.ver);
+                    vers.forEach((v, vi) => {
+                        const rec = v.rec;
+                        const tid = rec.task_name || rec.task_id || rec.folder_name;
+                        const status = rec.review_status || 'unreviewed';
+                        const hasErr = rec.error_count > 0;
+                        const cardUrl = '/annotator/' + encodeURIComponent(rec.folder_name) + '?folder=' + encodeURIComponent(folder) + '&direct=1';
+                        gridHtml += '<div class="task-card' + (hasErr ? ' has-errors' : '') + (vi > 0 ? ' older-version' : '') + '" onclick="window.location.href=\\'' + cardUrl + '\\'">';
+                        gridHtml += '<div class="task-title">' + tid + '</div>';
+                        if (rec.query) gridHtml += '<div class="task-query">' + rec.query + '</div>';
+                        gridHtml += '<div class="task-badges">';
+                        gridHtml += '<span class="badge ' + status + '">' + status.charAt(0).toUpperCase() + status.slice(1) + '</span>';
+                        if (hasErr) gridHtml += '<span class="badge errors">' + rec.error_count + ' errors</span>';
+                        if (rec.has_ai_results) gridHtml += '<span class="badge ai">AI Checked</span>';
+                        if (rec.has_corrections) gridHtml += '<span class="badge corrected">Has Edits</span>';
+                        if (vi > 0) gridHtml += '<span class="badge unreviewed">Older Version</span>';
+                        gridHtml += '</div></div>';
+                    });
+                });
+
+                document.getElementById('taskGrid').innerHTML = gridHtml || '<div class="loading">No tasks found for this user</div>';
+            } catch (err) {
+                document.getElementById('taskGrid').innerHTML = '<div class="error-msg">Failed to load: ' + err.message + '</div>';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Load My Tasks';
+                document.getElementById('refreshBtn').style.display = 'inline-block';
+            }
+        }
+    </script>
+</body>
+</html>
