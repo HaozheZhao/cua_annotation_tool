@@ -915,6 +915,55 @@ def _run_ai_check_thread(ann_key, oss_folder, folder_name):
             _ai_check_tasks[ann_key] = {'status': 'failed', 'error': str(e)}
 
 
+def _preextract_video_frames(local_dir, steps):
+    """Pre-extract all step frames from video in one pass, caching to _frames/.
+    Opens the video once, seeks to each timestamp, and saves as JPEG.
+    This makes subsequent /oss_frame/ requests instant (serve from disk)."""
+    local_dir = Path(local_dir)
+    frame_dir = local_dir / '_frames'
+
+    # Check how many frames are missing
+    missing = []
+    for step in steps:
+        vt = step.get('video_time', 0)
+        cache_file = frame_dir / f'{float(vt):.1f}.jpg'
+        if not cache_file.exists():
+            missing.append(vt)
+
+    if not missing:
+        return  # All frames already cached
+
+    # Find video file
+    video_file = None
+    for f in local_dir.glob('*.mp4'):
+        if 'video_clips' not in str(f):
+            video_file = f
+            break
+    if not video_file:
+        return
+
+    try:
+        import cv2
+        frame_dir.mkdir(parents=True, exist_ok=True)
+        cap = cv2.VideoCapture(str(video_file))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        for vt in missing:
+            frame_num = int(float(vt) * fps)
+            frame_num = max(0, min(frame_num, total_frames - 1))
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+            ret, frame = cap.read()
+            if ret:
+                cache_file = frame_dir / f'{float(vt):.1f}.jpg'
+                _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                cache_file.write_bytes(buf.tobytes())
+
+        cap.release()
+    except Exception:
+        pass
+
+
 def load_oss_task_data(local_dir):
     """Load task data from locally cached OSS recording files.
     Similar to load_task_data but reads from an arbitrary directory."""
@@ -7328,6 +7377,10 @@ def api_oss_task(folder_name):
         if not data:
             return jsonify({'error': 'Could not load recording data. Missing required files.'}), 404
 
+        # Pre-extract ALL frames in one pass (avoids re-opening video per frame)
+        if data.get('screenshot_mode') == 'video':
+            _preextract_video_frames(local_dir, data.get('steps', []))
+
         # Get review status
         review_statuses = load_review_status()
         review_key = f"{oss_folder}/{folder_name}"
@@ -7419,11 +7472,17 @@ def api_oss_task(folder_name):
 @app.route('/oss_frame/<path:folder_name>/<float:video_time>')
 @any_login_required
 def oss_serve_frame(folder_name, video_time):
-    """Serve a frame — from screenshot file or by extracting from video."""
+    """Serve a frame — from pre-extracted cache, screenshot file, or video."""
     local_dir = OSS_CACHE_DIR / folder_name
     oss_folder = request.args.get('folder', 'recordings_0303')
 
-    # Try screenshot file first (new format: video_time encodes event ID)
+    # Check pre-extracted frame cache first (fastest path)
+    frame_cache = local_dir / '_frames' / f'{video_time:.1f}.jpg'
+    if frame_cache.exists():
+        return Response(frame_cache.read_bytes(), mimetype='image/jpeg',
+                        headers={'Cache-Control': 'public, max-age=3600'})
+
+    # Try screenshot file (new format: video_time encodes event ID)
     step_idx = int(video_time)
     screenshots_dir = local_dir / 'screenshots'
     for ext in ('.jpg', '.png'):
@@ -7485,7 +7544,18 @@ def oss_serve_frame(folder_name, video_time):
         return 'Frame extraction failed', 500
 
     _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-    return Response(buffer.tobytes(), mimetype='image/jpeg')
+    jpg_bytes = buffer.tobytes()
+
+    # Cache extracted frame for next time
+    try:
+        fc_dir = local_dir / '_frames'
+        fc_dir.mkdir(parents=True, exist_ok=True)
+        (fc_dir / f'{video_time:.1f}.jpg').write_bytes(jpg_bytes)
+    except Exception:
+        pass
+
+    return Response(jpg_bytes, mimetype='image/jpeg',
+                    headers={'Cache-Control': 'public, max-age=3600'})
 
 @app.route('/api/oss/annotate', methods=['POST'])
 @any_login_required
