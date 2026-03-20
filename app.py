@@ -2043,7 +2043,7 @@ HTML_TEMPLATE = '''
                             <label>OSWorld Overlap <span class="label-hint">(与OSWorld重叠)</span></label>
                             <div class="knowledge-tags" id="osworld-tags">
                                 ${(ann.osworld_overlap || task.osworld_overlap || []).map(tag =>
-                                    `<span class="knowledge-tag">${tag}<span class="remove-tag" onclick="removeTag('osworld_overlap', '${tag}')">×</span></span>`
+                                    `<span class="knowledge-tag">${tag}<span class="remove-tag" onclick="removeTag('osworld_overlap', '${tag.replace(/'/g, "\\'")}')">×</span></span>`
                                 ).join('')}
                             </div>
                             <div class="knowledge-input-row">
@@ -2055,7 +2055,7 @@ HTML_TEMPLATE = '''
                             <label>Custom Nodes <span class="label-hint">(自定义节点)</span></label>
                             <div class="knowledge-tags" id="custom-tags">
                                 ${(ann.custom_nodes || task.custom_nodes || []).map(tag =>
-                                    `<span class="knowledge-tag">${tag}<span class="remove-tag" onclick="removeTag('custom_nodes', '${tag}')">×</span></span>`
+                                    `<span class="knowledge-tag">${tag}<span class="remove-tag" onclick="removeTag('custom_nodes', '${tag.replace(/'/g, "\\'")}')">×</span></span>`
                                 ).join('')}
                             </div>
                             <div class="knowledge-input-row">
@@ -2067,7 +2067,7 @@ HTML_TEMPLATE = '''
                             <label>Related Apps <span class="label-hint">(相关应用)</span></label>
                             <div class="knowledge-tags" id="apps-tags">
                                 ${(ann.related_apps || task.related_apps || []).map(tag =>
-                                    `<span class="knowledge-tag">${tag}<span class="remove-tag" onclick="removeTag('related_apps', '${tag}')">×</span></span>`
+                                    `<span class="knowledge-tag">${tag}<span class="remove-tag" onclick="removeTag('related_apps', '${tag.replace(/'/g, "\\'")}')">×</span></span>`
                                 ).join('')}
                             </div>
                             <div class="knowledge-input-row">
@@ -6568,14 +6568,19 @@ OSS_REVIEW_TEMPLATE = '''
 
         let deleteConfirmStep = null;
         function confirmDeleteStep(stepIdx) {
+            // Find the correct delete button for this step
+            var card = document.getElementById('stacked-step-' + stepIdx);
+            var btn = card ? card.querySelector('.delete-step-btn') : null;
+            // Also check detail overlay
+            if (!btn && document.getElementById('detailOverlay').classList.contains('show')) {
+                btn = document.querySelector('#detailOverlayBody .delete-step-btn');
+            }
+
             if (deleteConfirmStep === stepIdx) {
-                // Second click - actually delete
                 doDeleteStep(stepIdx);
                 deleteConfirmStep = null;
             } else {
-                // First click - ask for confirmation
                 deleteConfirmStep = stepIdx;
-                const btn = document.querySelector('.delete-step-btn');
                 if (btn) {
                     btn.textContent = 'CONFIRM DELETE?';
                     btn.style.background = '#f44336';
@@ -6584,9 +6589,8 @@ OSS_REVIEW_TEMPLATE = '''
                 setTimeout(() => {
                     if (deleteConfirmStep === stepIdx) {
                         deleteConfirmStep = null;
-                        const btn = document.querySelector('.delete-step-btn');
                         if (btn) {
-                            btn.textContent = 'Delete Step';
+                            btn.textContent = 'Delete';
                             btn.style.background = '';
                             btn.style.color = '';
                         }
