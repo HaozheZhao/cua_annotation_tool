@@ -4263,10 +4263,27 @@ OSS_REVIEW_TEMPLATE = '''
         .loading-overlay {
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(15, 15, 26, 0.9);
+            background: rgba(15, 15, 26, 0.92);
             display: flex; justify-content: center; align-items: center;
-            z-index: 1000; font-size: 1.2em; color: #00d9ff;
+            z-index: 1000; color: #00d9ff;
         }
+        .loading-card {
+            text-align: center; max-width: 420px; width: 90%;
+        }
+        .loading-card .load-title {
+            font-size: 1.1em; margin-bottom: 14px; font-weight: 600;
+        }
+        .loading-card .load-bar-track {
+            background: #252542; border-radius: 6px; height: 8px; overflow: hidden; margin-bottom: 8px;
+        }
+        .loading-card .load-bar-fill {
+            height: 100%; background: linear-gradient(90deg, #00d9ff, #7c4dff); border-radius: 6px;
+            transition: width 0.3s; width: 0%;
+        }
+        .loading-card .load-status {
+            color: #888; font-size: 0.82em;
+        }
+        @keyframes loadPulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
 
         .panel-review { display: block; }
         .panel-annotation { display: none; }
@@ -4685,7 +4702,13 @@ OSS_REVIEW_TEMPLATE = '''
     </style>
 </head>
 <body>
-    <div class="loading-overlay" id="loadingOverlay">Loading recording data...</div>
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-card">
+            <div class="load-title" id="loadTitle">Loading recording data...</div>
+            <div class="load-bar-track"><div class="load-bar-fill" id="loadBar" style="animation:loadPulse 1.5s infinite;width:5%"></div></div>
+            <div class="load-status" id="loadStatus">Connecting...</div>
+        </div>
+    </div>
 
     <div class="header">
         <h1>OSS Review</h1>
@@ -5055,8 +5078,16 @@ OSS_REVIEW_TEMPLATE = '''
             document.getElementById('aiCheckStatus').textContent = '';
             document.getElementById('aiCheckStatus').style.color = '#888';
             document.getElementById('loadingOverlay').style.display = 'flex';
+            setLoadProgress(10, 'Switching recording...');
             loadTask();
             renderRecordingSidebar();
+        }
+
+        function setLoadProgress(pct, msg) {
+            var bar = document.getElementById('loadBar');
+            var status = document.getElementById('loadStatus');
+            if (bar) { bar.style.width = pct + '%'; bar.style.animation = pct >= 100 ? 'none' : 'loadPulse 1.5s infinite'; }
+            if (status) status.textContent = msg || '';
         }
 
         // ========== Mode toggle ==========
@@ -5073,7 +5104,9 @@ OSS_REVIEW_TEMPLATE = '''
 
         async function loadTask() {
             try {
+                setLoadProgress(15, 'Fetching recording data from server...');
                 const resp = await fetch('/api/oss/task/' + encodeURIComponent(folderName) + '?folder=' + encodeURIComponent(ossFolder));
+                setLoadProgress(50, 'Parsing response...');
                 taskData = await resp.json();
 
                 if (taskData.error) {
@@ -5082,6 +5115,7 @@ OSS_REVIEW_TEMPLATE = '''
                     document.getElementById('loadingOverlay').style.display = 'none';
                     return;
                 }
+                setLoadProgress(65, 'Loading ' + (taskData.steps || []).length + ' steps...');
 
                 annotation = taskData.annotation || {};
                 coordAdjustments = taskData.coord_adjustments || {};
@@ -5151,10 +5185,13 @@ OSS_REVIEW_TEMPLATE = '''
                 updateReviewUI();
                 updateReviewProgress();
 
+                setLoadProgress(80, 'Rendering step sidebar...');
                 renderStepSidebar();
+                setLoadProgress(90, 'Rendering ' + (taskData.steps || []).length + ' steps...');
                 renderStep(0);
                 if (viewMode === 'grid') renderGrid();
 
+                setLoadProgress(100, 'Done!');
                 document.getElementById('loadingOverlay').style.display = 'none';
             } catch (err) {
                 document.getElementById('contentArea').innerHTML =
