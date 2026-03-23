@@ -434,42 +434,74 @@ def build_pyautogui_code(action, event, description):
 
 def load_review_status():
     """Load review status from JSON file."""
-    if REVIEW_STATUS_FILE.exists():
-        with open(REVIEW_STATUS_FILE, 'r') as f:
-            return json.load(f)
-    return {}
+    return _safe_load_json(REVIEW_STATUS_FILE)
 
 def save_review_status(status):
     """Save review status to JSON file."""
-    REVIEW_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(REVIEW_STATUS_FILE, 'w') as f:
-        json.dump(status, f, indent=2)
+    _safe_save_json(REVIEW_STATUS_FILE, status)
+
+def _safe_load_json(filepath):
+    """Load JSON file with error recovery. If corrupted, try backup or return empty dict."""
+    filepath = Path(filepath)
+    if not filepath.exists():
+        return {}
+    try:
+        with open(filepath, 'r') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.error(f"Corrupted JSON file {filepath}: {e}")
+        backup = filepath.with_suffix('.json.bak')
+        if backup.exists():
+            try:
+                with open(backup, 'r') as f:
+                    data = json.load(f)
+                logger.info(f"Recovered from backup: {backup}")
+                with open(filepath, 'w') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                return data
+            except Exception:
+                pass
+        logger.error(f"No valid backup for {filepath}, returning empty dict")
+        return {}
+
+
+def _safe_save_json(filepath, data):
+    """Save JSON file atomically — write to temp then rename to prevent corruption."""
+    filepath = Path(filepath)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file = filepath.with_suffix('.json.tmp')
+    try:
+        with open(tmp_file, 'w') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        if filepath.exists():
+            backup = filepath.with_suffix('.json.bak')
+            try:
+                shutil.copy2(str(filepath), str(backup))
+            except Exception:
+                pass
+        tmp_file.rename(filepath)
+    except Exception as e:
+        logger.error(f"Failed to save {filepath}: {e}")
+        if tmp_file.exists():
+            tmp_file.unlink()
+        raise
+
 
 def load_oss_annotations():
     """Load OSS recording annotations."""
-    if OSS_ANNOTATIONS_FILE.exists():
-        with open(OSS_ANNOTATIONS_FILE, 'r') as f:
-            return json.load(f)
-    return {}
+    return _safe_load_json(OSS_ANNOTATIONS_FILE)
 
 def save_oss_annotations(annotations):
     """Save OSS recording annotations."""
-    OSS_ANNOTATIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(OSS_ANNOTATIONS_FILE, 'w') as f:
-        json.dump(annotations, f, indent=2, ensure_ascii=False)
+    _safe_save_json(OSS_ANNOTATIONS_FILE, annotations)
 
 def load_oss_coord_adjustments():
     """Load OSS coordinate adjustments."""
-    if OSS_COORD_ADJUSTMENTS_FILE.exists():
-        with open(OSS_COORD_ADJUSTMENTS_FILE, 'r') as f:
-            return json.load(f)
-    return {}
+    return _safe_load_json(OSS_COORD_ADJUSTMENTS_FILE)
 
 def save_oss_coord_adjustments(adjustments):
     """Save OSS coordinate adjustments."""
-    OSS_COORD_ADJUSTMENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(OSS_COORD_ADJUSTMENTS_FILE, 'w') as f:
-        json.dump(adjustments, f, indent=2, ensure_ascii=False)
+    _safe_save_json(OSS_COORD_ADJUSTMENTS_FILE, adjustments)
 
 def _build_case_overlay(oss_folder, folder_name):
     """Build the complete overlay dict for a case by merging annotations + coord adjustments.
