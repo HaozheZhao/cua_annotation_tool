@@ -1379,12 +1379,10 @@
 
         document.getElementById('backLink').href = '/dashboard';
 
-        // If direct access mode, hide recording sidebar and AI check
+        // If direct access mode, hide recording sidebar (but keep AI check visible)
         if (directMode) {
             const recSidebar = document.getElementById('recSidebar');
             if (recSidebar) recSidebar.style.display = 'none';
-            const aiContainer = document.getElementById('aiCheckContainer');
-            if (aiContainer) aiContainer.style.display = 'none';
         }
 
         // Annotator mode: hide AI check, mode toggle, reset button; change header
