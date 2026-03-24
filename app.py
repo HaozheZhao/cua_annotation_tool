@@ -536,8 +536,8 @@ def _sync_overlay_to_oss(oss_folder, folder_name):
         import oss_client
         overlay = _build_case_overlay(oss_folder, folder_name)
         oss_client.upload_annotation_overlay(oss_folder, folder_name, overlay)
-    except Exception:
-        pass  # Best-effort; local save already succeeded
+    except Exception as e:
+        logger.warning(f"Failed to sync overlay to OSS for {folder_name}: {e}")
 
 
 def _load_overlay_from_oss(oss_folder, folder_name):
@@ -551,22 +551,22 @@ def _load_overlay_from_oss(oss_folder, folder_name):
 
         ann_key = f"{oss_folder}/{folder_name}"
 
-        # Extract coord_adjustments from overlay and store separately
+        # Extract coord_adjustments and timestamp from overlay
         case_coords = overlay.pop('coord_adjustments', {})
-        overlay.pop('_last_updated', None)
+        oss_ts = overlay.pop('_last_updated', '')
 
         # Update local annotations — merge OSS and local, keep the newer one
         oss_annotations = load_oss_annotations()
         local_ann = oss_annotations.get(ann_key, {})
         local_ts = local_ann.get('_last_updated', '')
-        oss_ts = overlay.get('_last_updated', '')
 
         # Only overwrite local if OSS is newer or local has no data
         if not local_ann or (oss_ts and oss_ts >= local_ts):
+            overlay['_last_updated'] = oss_ts  # preserve timestamp
             oss_annotations[ann_key] = overlay
             save_oss_annotations(oss_annotations)
         else:
-            # Local is newer — keep local, try to push it to OSS
+            # Local is newer — keep local data
             logger.info(f"Keeping local annotations for {ann_key} (local={local_ts} > oss={oss_ts})")
 
         # Update local coord adjustments
