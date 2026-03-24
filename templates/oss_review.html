@@ -1244,6 +1244,7 @@
         </div>
         <div id="aiCheckContainer" style="display:flex;align-items:center;gap:6px;">
             <button class="btn-ai-check" id="aiCheckBtn" onclick="startAiCheck()">AI Check</button>
+            <button class="btn-ai-check" id="aiRerunBtn" onclick="startAiCheck(true)" style="display:none;font-size:0.7em;padding:3px 8px;background:#9c27b0;color:#fff;border-color:#9c27b0;">Rerun</button>
             <span id="aiCheckStatus" style="font-size:0.75em;color:#888;"></span>
         </div>
         <button class="btn-reset" onclick="confirmResetCase()">Reset to Original</button>
@@ -3309,6 +3310,7 @@
             const btn = document.getElementById('aiCheckBtn');
             btn.classList.add('running');
             btn.textContent = 'Checking...';
+            document.getElementById('aiRerunBtn').style.display = 'none';
             document.getElementById('aiCheckStatus').textContent = '';
             aiCheckStartTime = Date.now();
 
@@ -3359,6 +3361,7 @@
                     showAiProgress(false);
                     document.getElementById('aiCheckBtn').classList.remove('running');
                     document.getElementById('aiCheckBtn').textContent = 'AI Check (Failed)';
+                    document.getElementById('aiRerunBtn').style.display = 'inline-block';
                     document.getElementById('aiCheckStatus').textContent = data.error || 'Check failed';
                 }
             });
@@ -3369,6 +3372,7 @@
             const btn = document.getElementById('aiCheckBtn');
             btn.classList.remove('running');
             btn.textContent = 'AI Check \u2713';
+            document.getElementById('aiRerunBtn').style.display = 'inline-block';
             // Count issues
             let issues = 0;
             const steps = (aiCheckResults && aiCheckResults.steps) || {};
