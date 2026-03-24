@@ -493,8 +493,10 @@ def load_oss_annotations():
     """Load OSS recording annotations."""
     return _safe_load_json(OSS_ANNOTATIONS_FILE)
 
-def save_oss_annotations(annotations):
-    """Save OSS recording annotations."""
+def save_oss_annotations(annotations, updated_key=None):
+    """Save OSS recording annotations. If updated_key provided, updates its _last_updated."""
+    if updated_key and updated_key in annotations and isinstance(annotations[updated_key], dict):
+        annotations[updated_key]['_last_updated'] = datetime.utcnow().isoformat() + 'Z'
     _safe_save_json(OSS_ANNOTATIONS_FILE, annotations)
 
 def load_oss_coord_adjustments():
@@ -536,8 +538,8 @@ def _sync_overlay_to_oss(oss_folder, folder_name):
         import oss_client
         overlay = _build_case_overlay(oss_folder, folder_name)
         oss_client.upload_annotation_overlay(oss_folder, folder_name, overlay)
-    except Exception:
-        pass  # Best-effort; local save already succeeded
+    except Exception as e:
+        logger.warning(f"Failed to sync overlay to OSS for {folder_name}: {e}")
 
 
 def _load_overlay_from_oss(oss_folder, folder_name):
@@ -551,19 +553,22 @@ def _load_overlay_from_oss(oss_folder, folder_name):
 
         ann_key = f"{oss_folder}/{folder_name}"
 
-        # Extract coord_adjustments from overlay and store separately
+        # Extract coord_adjustments and timestamp from overlay
         case_coords = overlay.pop('coord_adjustments', {})
-        overlay.pop('_last_updated', None)
+        oss_ts = overlay.pop('_last_updated', '')
 
-        # Update local annotations
+        # Update local annotations — merge OSS and local, keep the newer one
         oss_annotations = load_oss_annotations()
         local_ann = oss_annotations.get(ann_key, {})
         local_ts = local_ann.get('_last_updated', '')
-        oss_ts = overlay.get('_last_updated', '')
 
-        # OSS overlay wins (it's the shared source of truth)
-        oss_annotations[ann_key] = overlay
-        save_oss_annotations(oss_annotations)
+        # Only overwrite local if OSS is newer or local has no data
+        if not local_ann or (oss_ts and oss_ts >= local_ts):
+            overlay['_last_updated'] = oss_ts
+            oss_annotations[ann_key] = overlay
+            save_oss_annotations(oss_annotations)
+        else:
+            logger.info(f"Keeping local annotations for {ann_key} (local={local_ts} > oss={oss_ts})")
 
         # Update local coord adjustments
         if case_coords:
@@ -936,7 +941,7 @@ def _run_ai_check_thread(ann_key, oss_folder, folder_name):
         if ann_key not in oss_annotations:
             oss_annotations[ann_key] = {}
         oss_annotations[ann_key]['ai_check_results'] = final_results
-        save_oss_annotations(oss_annotations)
+        save_oss_annotations(oss_annotations, updated_key=ann_key)
 
         _sync_overlay_to_oss(oss_folder, folder_name)
 
@@ -7391,7 +7396,7 @@ def api_oss_annotate():
     if 'deleted_steps' in data:
         existing['deleted_steps'] = data['deleted_steps']
     oss_annotations[ann_key] = existing
-    save_oss_annotations(oss_annotations)
+    save_oss_annotations(oss_annotations, updated_key=ann_key)
 
     # Sync to review_status.json
     review_statuses = load_review_status()
@@ -7469,7 +7474,7 @@ def api_oss_review():
             oss_annotations[review_key]['mark'] = 'fail'
         else:
             oss_annotations[review_key]['mark'] = None
-        save_oss_annotations(oss_annotations)
+        save_oss_annotations(oss_annotations, updated_key=review_key)
 
     _sync_overlay_to_oss(oss_folder, folder_name)
     return jsonify({'success': True})
@@ -7492,7 +7497,7 @@ def api_oss_update_justification():
     edits[str(step_index)] = justification
     existing['justification_edits'] = edits
     oss_annotations[ann_key] = existing
-    save_oss_annotations(oss_annotations)
+    save_oss_annotations(oss_annotations, updated_key=ann_key)
 
     _sync_overlay_to_oss(oss_folder, folder_name)
     return jsonify({'success': True})
@@ -7516,7 +7521,7 @@ def api_oss_update_code():
     edits[str(step_index)] = code
     existing['code_edits'] = edits
     oss_annotations[ann_key] = existing
-    save_oss_annotations(oss_annotations)
+    save_oss_annotations(oss_annotations, updated_key=ann_key)
 
     _sync_overlay_to_oss(oss_folder, folder_name)
     return jsonify({'success': True})
@@ -7539,7 +7544,7 @@ def api_oss_update_video_time():
     edits[str(step_index)] = video_time
     existing['video_time_edits'] = edits
     oss_annotations[ann_key] = existing
-    save_oss_annotations(oss_annotations)
+    save_oss_annotations(oss_annotations, updated_key=ann_key)
 
     _sync_overlay_to_oss(oss_folder, folder_name)
     return jsonify({'success': True})
@@ -7560,7 +7565,7 @@ def api_oss_update_query():
     existing = oss_annotations.get(ann_key, {})
     existing['query'] = query
     oss_annotations[ann_key] = existing
-    save_oss_annotations(oss_annotations)
+    save_oss_annotations(oss_annotations, updated_key=ann_key)
 
     _sync_overlay_to_oss(oss_folder, folder_name)
     return jsonify({'success': True})
@@ -7587,7 +7592,7 @@ def api_oss_delete_step():
         deleted.append(original_index)
     existing['deleted_steps'] = sorted(deleted)
     oss_annotations[ann_key] = existing
-    save_oss_annotations(oss_annotations)
+    save_oss_annotations(oss_annotations, updated_key=ann_key)
 
     _sync_overlay_to_oss(oss_folder, folder_name)
     return jsonify({'success': True})
@@ -7615,7 +7620,7 @@ def api_oss_mark_step_error():
         step_errors.pop(si, None)
     existing['step_errors'] = step_errors
     oss_annotations[ann_key] = existing
-    save_oss_annotations(oss_annotations)
+    save_oss_annotations(oss_annotations, updated_key=ann_key)
 
     _sync_overlay_to_oss(oss_folder, folder_name)
     return jsonify({'success': True, 'error_count': len(step_errors)})
