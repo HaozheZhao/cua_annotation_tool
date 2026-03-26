@@ -42,3 +42,4 @@ export/
 # Selection and cache state
 selected_cases.json
 dashboard_cache.json
+export_temp/

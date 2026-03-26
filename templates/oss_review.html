@@ -3106,10 +3106,67 @@
 
         // ========== Export ==========
 
-        function exportCase() {
-            // Direct browser download — no blob buffering, no stuck overlay
-            var url = '/api/oss/export_case/' + encodeURIComponent(folderName) + '?folder=' + encodeURIComponent(ossFolder);
-            window.location.href = url;
+        async function exportCase() {
+            var btn = document.querySelector('.export-case-btn');
+            if (btn) { btn.textContent = 'Preparing...'; btn.disabled = true; }
+            var stepCount = taskData ? (taskData.steps || []).length : 0;
+
+            // Show progress overlay
+            var overlay = document.createElement('div');
+            overlay.id = 'exportOverlay';
+            overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,15,26,0.92);z-index:2000;display:flex;justify-content:center;align-items:center;';
+            overlay.innerHTML = '<div style="text-align:center;max-width:420px;width:90%;">' +
+                '<div style="color:#4caf50;font-size:1.1em;margin-bottom:14px;">Preparing Export</div>' +
+                '<div style="background:#252542;border-radius:6px;height:8px;overflow:hidden;margin-bottom:8px;">' +
+                '<div id="exportBar" style="height:100%;background:linear-gradient(90deg,#4caf50,#00d9ff);width:5%;transition:width 0.3s;"></div></div>' +
+                '<div id="exportStatus" style="color:#888;font-size:0.85em;">Building zip with ' + stepCount + ' steps...</div>' +
+                '<div id="exportLink" style="margin-top:14px;display:none;"></div></div>';
+            document.body.appendChild(overlay);
+
+            // Poll progress
+            var poll = setInterval(async function() {
+                try {
+                    var r = await fetch('/api/oss/export_case_progress?folder_name=' + encodeURIComponent(folderName) + '&folder=' + encodeURIComponent(ossFolder));
+                    var pg = await r.json();
+                    if (pg.total > 0) {
+                        var pct = Math.round((pg.progress / pg.total) * 100);
+                        var bar = document.getElementById('exportBar');
+                        if (bar) bar.style.width = pct + '%';
+                        var st = document.getElementById('exportStatus');
+                        if (st) st.textContent = 'Extracting screenshots: ' + pg.progress + ' / ' + pg.total;
+                    }
+                } catch(e) {}
+            }, 500);
+
+            try {
+                var url = '/api/oss/export_case/' + encodeURIComponent(folderName) + '?folder=' + encodeURIComponent(ossFolder);
+                var resp = await fetch(url);
+                clearInterval(poll);
+                var data = await resp.json();
+                if (data.download_url) {
+                    var bar = document.getElementById('exportBar');
+                    if (bar) bar.style.width = '100%';
+                    var st = document.getElementById('exportStatus');
+                    if (st) st.textContent = 'Export ready!';
+                    var linkDiv = document.getElementById('exportLink');
+                    if (linkDiv) {
+                        linkDiv.style.display = 'block';
+                        linkDiv.innerHTML = '<a href="' + data.download_url + '" style="display:inline-block;padding:10px 24px;background:#4caf50;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;font-size:0.95em;">Download ZIP</a>' +
+                            '<div style="margin-top:8px;"><button onclick="document.getElementById(\'exportOverlay\').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:0.8em;">Close</button></div>';
+                    }
+                } else {
+                    alert('Export failed: ' + (data.error || 'Unknown error'));
+                    var ov = document.getElementById('exportOverlay');
+                    if (ov) ov.remove();
+                }
+            } catch(err) {
+                clearInterval(poll);
+                alert('Export error: ' + err.message);
+                var ov = document.getElementById('exportOverlay');
+                if (ov) ov.remove();
+            } finally {
+                if (btn) { btn.textContent = 'Export Case'; btn.disabled = false; }
+            }
         }
 
         // ========== Reset to Original ==========

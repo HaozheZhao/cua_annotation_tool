@@ -2498,16 +2498,32 @@ def api_oss_export_case(folder_name):
                     _export_progress[ann_key] = {'progress': si + 1, 'total': total_steps, 'status': 'extracting'}
 
         _export_progress[ann_key] = {'progress': total_steps, 'total': total_steps, 'status': 'done'}
+
+        # Save to disk for direct download
+        export_dir = Path('export_temp')
+        export_dir.mkdir(exist_ok=True)
+        safe_name = folder_name.replace('/', '_')[:80] + '.zip'
+        export_path = export_dir / safe_name
         buf.seek(0)
-        return Response(
-            buf.getvalue(),
-            mimetype='application/zip',
-            headers={'Content-Disposition': f'attachment; filename={folder_name}.zip'}
-        )
+        with open(export_path, 'wb') as f:
+            f.write(buf.getvalue())
+
+        return jsonify({'success': True, 'download_url': f'/export_download/{safe_name}', 'filename': safe_name})
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({'error': f'Export failed: {str(e)}'}), 500
+
+
+@app.route('/export_download/<filename>')
+@any_login_required
+def api_export_download(filename):
+    """Serve a pre-built export zip file."""
+    export_dir = Path('export_temp').resolve()
+    filepath = export_dir / filename
+    if not filepath.exists() or not str(filepath).startswith(str(export_dir)):
+        return jsonify({'error': 'File not found'}), 404
+    return send_from_directory(str(export_dir), filename, as_attachment=True)
 
 
 @app.route('/api/oss/export_case_progress')
@@ -2892,9 +2908,17 @@ def api_selected_cases_export():
                                 break
 
         _export_progress['selected'] = {'progress': len(cases), 'total': len(cases), 'status': 'done', 'current': ''}
+
+        import time as _t
+        export_dir = Path('export_temp')
+        export_dir.mkdir(exist_ok=True)
+        safe_name = f'selected_{len(cases)}cases_{int(_t.time())}.zip'
+        export_path = export_dir / safe_name
         buf.seek(0)
-        return Response(buf.getvalue(), mimetype='application/zip',
-                        headers={'Content-Disposition': 'attachment; filename=selected_cases_export.zip'})
+        with open(export_path, 'wb') as f:
+            f.write(buf.getvalue())
+
+        return jsonify({'success': True, 'download_url': f'/export_download/{safe_name}', 'filename': safe_name})
     except Exception as e:
         import traceback
         traceback.print_exc()
