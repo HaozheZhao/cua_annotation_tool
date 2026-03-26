@@ -5356,7 +5356,10 @@ OSS_REVIEW_TEMPLATE = '''
                 // Coordinate with fine-tune
                 if (step.has_coordinate) {
                     html += '<div style="margin-bottom:6px;font-size:0.85em;">';
-                    if (isAdjusted) {
+                    if (step.action === 'drag' && step.drag_to) {
+                        html += 'Coord: <span class="current-coord">(' + step.coordinate.x + ', ' + step.coordinate.y + ') &rarr; (' + step.drag_to.x + ', ' + step.drag_to.y + ')</span>';
+                        if (isAdjusted) html += '<span class="original-coord">(' + origCoord.x + ', ' + origCoord.y + ')</span>';
+                    } else if (isAdjusted) {
                         html += 'Coord: <span class="current-coord" id="stacked-coord-' + idx + '">(' + step.coordinate.x + ', ' + step.coordinate.y + ')</span>';
                         html += '<span class="original-coord">(' + origCoord.x + ', ' + origCoord.y + ')</span>';
                     } else {
@@ -5649,6 +5652,7 @@ OSS_REVIEW_TEMPLATE = '''
             if (step.action === 'drag' && dragToX !== null) {
                 step.drag_to = {x:dragToX, y:dragToY};
                 step.code = 'pyautogui.moveTo(' + x + ', ' + y + '); pyautogui.dragTo(' + dragToX + ', ' + dragToY + ')';
+                step.description = 'Drag from (' + x + ', ' + y + ') to (' + dragToX + ', ' + dragToY + ')';
             } else if (step.action === 'click') {
                 if (step.code.includes('doubleClick')) step.code = 'pyautogui.doubleClick(' + x + ', ' + y + ')';
                 else if (step.code.includes('rightClick')) step.code = 'pyautogui.rightClick(' + x + ', ' + y + ')';
@@ -6076,6 +6080,7 @@ OSS_REVIEW_TEMPLATE = '''
             if (step.action === 'drag' && dragToX !== null) {
                 step.drag_to = {x:dragToX, y:dragToY};
                 step.code = 'pyautogui.moveTo(' + x + ', ' + y + '); pyautogui.dragTo(' + dragToX + ', ' + dragToY + ')';
+                step.description = 'Drag from (' + x + ', ' + y + ') to (' + dragToX + ', ' + dragToY + ')';
             } else if (step.action === 'click') {
                 if (step.code.includes('doubleClick')) step.code = 'pyautogui.doubleClick(' + x + ', ' + y + ')';
                 else if (step.code.includes('rightClick')) step.code = 'pyautogui.rightClick(' + x + ', ' + y + ')';
