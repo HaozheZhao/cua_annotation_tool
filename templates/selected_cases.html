@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Selected Cases</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:#0a0a14; color:#e0e0e0; min-height:100vh; }
+        .header { background:linear-gradient(135deg,#1a1a2e,#16213e); padding:14px 24px; border-bottom:2px solid #7c4dff; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; }
+        .header h1 { font-size:1.2em; color:#7c4dff; }
+        .header-actions { display:flex; gap:10px; align-items:center; }
+        .btn { padding:8px 18px; border:none; border-radius:6px; cursor:pointer; font-weight:bold; font-size:0.85em; transition:all 0.2s; }
+        .btn-export { background:linear-gradient(135deg,#4caf50,#388e3c); color:#fff; }
+        .btn-export:hover { transform:translateY(-1px); box-shadow:0 4px 15px rgba(76,175,80,0.3); }
+        .btn-back { background:transparent; border:1px solid #7c4dff; color:#7c4dff; text-decoration:none; padding:6px 14px; border-radius:6px; font-size:0.85em; }
+        .btn-back:hover { background:#7c4dff; color:#fff; }
+        .btn-clear { background:transparent; border:1px solid #f44336; color:#f44336; }
+        .btn-clear:hover { background:#f44336; color:#fff; }
+        .count-badge { background:#7c4dff; color:#fff; padding:4px 12px; border-radius:12px; font-size:0.9em; font-weight:bold; }
+        .content { max-width:1200px; margin:20px auto; padding:0 20px; }
+        .case-table { width:100%; border-collapse:collapse; }
+        .case-table th { text-align:left; padding:10px 14px; background:#16213e; color:#888; font-size:0.78em; text-transform:uppercase; border-bottom:1px solid #252542; }
+        .case-table td { padding:10px 14px; border-bottom:1px solid #1a1a2e; font-size:0.85em; }
+        .case-table tr:hover { background:#16213e; }
+        .case-table .name { color:#ccc; max-width:400px; word-break:break-all; }
+        .case-table .badge { padding:2px 8px; border-radius:4px; font-size:0.75em; font-weight:bold; }
+        .badge-pass { background:rgba(76,175,80,0.2); color:#4caf50; }
+        .badge-fail { background:rgba(244,67,54,0.2); color:#f44336; }
+        .badge-none { background:rgba(136,136,136,0.2); color:#888; }
+        .btn-remove { padding:4px 10px; border:1px solid #f44336; border-radius:4px; background:transparent; color:#f44336; cursor:pointer; font-size:0.78em; }
+        .btn-remove:hover { background:#f44336; color:#fff; }
+        .btn-view { padding:4px 10px; border:1px solid #00d9ff; border-radius:4px; background:transparent; color:#00d9ff; cursor:pointer; font-size:0.78em; text-decoration:none; }
+        .btn-view:hover { background:#00d9ff; color:#000; }
+        .empty { text-align:center; padding:60px; color:#555; }
+        .order-num { color:#7c4dff; font-weight:bold; min-width:30px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div style="display:flex;align-items:center;gap:12px;">
+            <h1>Selected Cases</h1>
+            <span class="count-badge" id="countBadge">0</span>
+        </div>
+        <div class="header-actions">
+            <button class="btn btn-export" id="exportBtn" onclick="exportSelected()">Export Selected</button>
+            <button class="btn btn-clear" onclick="clearAll()">Clear All</button>
+            <a class="btn-back" href="/dashboard">Back to Dashboard</a>
+        </div>
+    </div>
+    <div class="content">
+        <table class="case-table" id="caseTable">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Case</th>
+                    <th>Annotator</th>
+                    <th>Steps</th>
+                    <th>Review</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="caseBody">
+                <tr><td colspan="6" class="empty">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        let selectedCases = [];
+
+        async function init() {
+            const resp = await fetch('/api/selected_cases');
+            const data = await resp.json();
+            selectedCases = data.cases || [];
+            document.getElementById('countBadge').textContent = selectedCases.length;
+
+            if (selectedCases.length === 0) {
+                document.getElementById('caseBody').innerHTML = '<tr><td colspan="6" class="empty">No cases selected. Go to the Dashboard to select cases.</td></tr>';
+                return;
+            }
+
+            // Get metadata for all cases from dashboard data
+            const folders = new Set(selectedCases.map(k => k.split('/')[0]));
+            let allRecs = {};
+            for (const folder of folders) {
+                try {
+                    const r = await fetch('/api/oss/dashboard_data?folder=' + encodeURIComponent(folder));
+                    const dd = await r.json();
+                    if (dd.annotators) {
+                        for (const [user, ann] of Object.entries(dd.annotators)) {
+                            for (const rec of (ann.recordings || [])) {
+                                const key = folder + '/' + rec.folder_name;
+                                allRecs[key] = { ...rec, oss_folder: folder };
+                            }
+                        }
+                    }
+                } catch(e) {}
+            }
+
+            let html = '';
+            selectedCases.forEach((annKey, i) => {
+                const rec = allRecs[annKey] || {};
+                const parts = annKey.split('/');
+                const folder = parts[0];
+                const folderName = parts.slice(1).join('/');
+                const name = rec.task_name || rec.task_id || folderName.substring(0, 50);
+                const mark = rec.review_status || 'unreviewed';
+                const badgeCls = mark === 'reviewed' ? 'badge-pass' : mark === 'rejected' ? 'badge-fail' : 'badge-none';
+                const steps = rec.step_count || '-';
+
+                html += '<tr id="row-' + i + '">' +
+                    '<td class="order-num">' + (i + 1) + '</td>' +
+                    '<td class="name" title="' + annKey + '">' + name + '</td>' +
+                    '<td>' + (rec._username || rec.username || '-') + '</td>' +
+                    '<td>' + steps + '</td>' +
+                    '<td><span class="badge ' + badgeCls + '">' + mark + '</span></td>' +
+                    '<td>' +
+                    '<a class="btn-view" href="/oss_review/' + encodeURIComponent(folderName) + '?folder=' + encodeURIComponent(folder) + '" target="_blank">View</a> ' +
+                    '<button class="btn-remove" onclick="removeCase(\'' + annKey.replace(/'/g, "\\'") + '\',' + i + ')">Remove</button>' +
+                    '</td></tr>';
+            });
+            document.getElementById('caseBody').innerHTML = html;
+        }
+
+        async function removeCase(annKey, rowIdx) {
+            await fetch('/api/selected_cases/remove', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ ann_key: annKey })
+            });
+            const row = document.getElementById('row-' + rowIdx);
+            if (row) row.remove();
+            selectedCases = selectedCases.filter(k => k !== annKey);
+            document.getElementById('countBadge').textContent = selectedCases.length;
+        }
+
+        async function clearAll() {
+            if (!confirm('Remove all ' + selectedCases.length + ' cases from selection?')) return;
+            for (const key of selectedCases.slice()) {
+                await fetch('/api/selected_cases/remove', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ ann_key: key })
+                });
+            }
+            selectedCases = [];
+            document.getElementById('countBadge').textContent = '0';
+            document.getElementById('caseBody').innerHTML = '<tr><td colspan="6" class="empty">All cases removed.</td></tr>';
+        }
+
+        async function exportSelected() {
+            const btn = document.getElementById('exportBtn');
+            btn.textContent = 'Exporting...';
+            btn.disabled = true;
+            try {
+                const resp = await fetch('/api/selected_cases/export');
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    alert('Export failed: ' + (err.error || resp.statusText));
+                    return;
+                }
+                const blob = await resp.blob();
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'selected_cases_export.zip';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            } catch(e) {
+                alert('Export error: ' + e.message);
+            } finally {
+                btn.textContent = 'Export Selected';
+                btn.disabled = false;
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>

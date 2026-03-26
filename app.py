@@ -82,6 +82,7 @@ OSS_CACHE_DIR = Path(os.environ.get('CUA_OSS_CACHE', './oss_cache'))
 REVIEW_STATUS_FILE = Path(os.environ.get('CUA_REVIEW_STATUS', './review_status.json'))
 OSS_ANNOTATIONS_FILE = Path(os.environ.get('CUA_OSS_ANNOTATIONS', './oss_annotations.json'))
 OSS_COORD_ADJUSTMENTS_FILE = Path(os.environ.get('CUA_OSS_COORD_ADJ', './oss_coord_adjustments.json'))
+SELECTED_CASES_FILE = Path(os.environ.get('CUA_SELECTED_CASES', './selected_cases.json'))
 
 # Server-side dashboard cache: { folder_name: { annotators: {...}, folder: str, _timestamp: float } }
 _dashboard_cache = {}
@@ -504,6 +505,15 @@ def load_oss_coord_adjustments():
 def save_oss_coord_adjustments(adjustments):
     """Save OSS coordinate adjustments."""
     _safe_save_json(OSS_COORD_ADJUSTMENTS_FILE, adjustments)
+
+def load_selected_cases():
+    """Load selected cases list."""
+    return _safe_load_json(SELECTED_CASES_FILE)
+
+def save_selected_cases(data):
+    """Save selected cases list."""
+    _safe_save_json(SELECTED_CASES_FILE, data)
+
 
 def _build_case_overlay(oss_folder, folder_name):
     """Build the complete overlay dict for a case by merging annotations + coord adjustments.
@@ -2636,6 +2646,205 @@ def api_oss_export_progress():
             if (OSS_CACHE_DIR / rec_name).exists():
                 cached += 1
     return jsonify({'total': total, 'cached': cached})
+
+
+# ============================================================================
+# Selected Cases API
+# ============================================================================
+
+@app.route('/api/selected_cases')
+@reviewer_login_required
+def api_selected_cases():
+    """Get the current selection list."""
+    data = load_selected_cases()
+    return jsonify({
+        'cases': data.get('cases', []),
+        'selected_at': data.get('selected_at', {}),
+        'count': len(data.get('cases', []))
+    })
+
+
+@app.route('/api/selected_cases/toggle', methods=['POST'])
+@reviewer_login_required
+def api_selected_cases_toggle():
+    """Toggle a case in/out of the selection."""
+    req = request.json
+    ann_key = req.get('ann_key', '')
+    if not ann_key:
+        return jsonify({'error': 'Missing ann_key'}), 400
+
+    data = load_selected_cases()
+    cases = data.get('cases', [])
+    selected_at = data.get('selected_at', {})
+
+    if ann_key in cases:
+        cases.remove(ann_key)
+        selected_at.pop(ann_key, None)
+        selected = False
+    else:
+        cases.append(ann_key)
+        selected_at[ann_key] = datetime.utcnow().isoformat() + 'Z'
+        selected = True
+
+    save_selected_cases({'cases': cases, 'selected_at': selected_at})
+    return jsonify({'selected': selected, 'count': len(cases)})
+
+
+@app.route('/api/selected_cases/auto_select_passed', methods=['POST'])
+@reviewer_login_required
+def api_selected_cases_auto_select_passed():
+    """Auto-select all cases with mark=pass in the given folder."""
+    folder = request.json.get('folder', '')
+    if not folder:
+        return jsonify({'error': 'Missing folder'}), 400
+
+    oss_annotations = load_oss_annotations()
+    data = load_selected_cases()
+    cases = data.get('cases', [])
+    selected_at = data.get('selected_at', {})
+    existing = set(cases)
+
+    added = 0
+    for ann_key, ann in oss_annotations.items():
+        if ann_key.startswith(folder + '/') and ann.get('mark') == 'pass' and ann_key not in existing:
+            cases.append(ann_key)
+            selected_at[ann_key] = datetime.utcnow().isoformat() + 'Z'
+            added += 1
+
+    save_selected_cases({'cases': cases, 'selected_at': selected_at})
+    return jsonify({'added': added, 'total': len(cases)})
+
+
+@app.route('/api/selected_cases/remove', methods=['POST'])
+@reviewer_login_required
+def api_selected_cases_remove():
+    """Remove a case from selection."""
+    ann_key = request.json.get('ann_key', '')
+    data = load_selected_cases()
+    cases = data.get('cases', [])
+    selected_at = data.get('selected_at', {})
+    if ann_key in cases:
+        cases.remove(ann_key)
+        selected_at.pop(ann_key, None)
+    save_selected_cases({'cases': cases, 'selected_at': selected_at})
+    return jsonify({'success': True, 'count': len(cases)})
+
+
+@app.route('/api/selected_cases/export')
+@reviewer_login_required
+def api_selected_cases_export():
+    """Export all selected cases as a single zip."""
+    try:
+        import cv2
+        data = load_selected_cases()
+        cases = data.get('cases', [])
+        if not cases:
+            return jsonify({'error': 'No cases selected'}), 400
+
+        oss_annotations = load_oss_annotations()
+        coord_adjustments = load_oss_coord_adjustments()
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for ann_key in cases:
+                parts = ann_key.split('/', 1)
+                if len(parts) != 2:
+                    continue
+                oss_folder, rec_name = parts
+                ann = oss_annotations.get(ann_key, {})
+                local_dir = OSS_CACHE_DIR / rec_name
+                if not local_dir.exists():
+                    continue
+                task_data = load_oss_task_data(local_dir)
+                if not task_data:
+                    continue
+
+                steps = task_data.get('steps', [])
+                justification_edits = ann.get('justification_edits', {})
+                code_edits = ann.get('code_edits', {})
+                deleted_steps = set(ann.get('deleted_steps', []))
+                for step in steps:
+                    si = str(step['index'])
+                    if si in justification_edits:
+                        step['justification'] = justification_edits[si]
+                    if si in code_edits:
+                        step['code'] = code_edits[si]
+                if deleted_steps:
+                    steps = [s for s in steps if s['index'] not in deleted_steps]
+
+                traj = []
+                for step in steps:
+                    traj.append({
+                        'index': step['index'],
+                        'action_type': step.get('action', ''),
+                        'code': step.get('code', ''),
+                        'screenshot': f"step_{step['index']}.png",
+                        'coordinate': step.get('coordinate', {}),
+                        'justification': step.get('justification', ''),
+                        'description': step.get('description', ''),
+                    })
+
+                info = task_data.get('annotator_info', {})
+                query = ann.get('query', info.get('query', ''))
+                export_json = {
+                    'folder_name': rec_name,
+                    'query': query,
+                    'instruction': query,
+                    'annotator': info.get('username', ''),
+                    'task_id': info.get('task_id', ''),
+                    'mark': ann.get('mark'),
+                    'traj': traj,
+                }
+                zf.writestr(f"{rec_name}/export.json", json.dumps(export_json, indent=2, ensure_ascii=False))
+
+                export_lines = [json.dumps({'action': t['action_type'], 'coordinate': t['coordinate'],
+                    'justification': t['justification'], 'description': t['description'],
+                    'code': t['code']}, ensure_ascii=False) for t in traj]
+                zf.writestr(f"{rec_name}/events.jsonl", '\n'.join(export_lines) + '\n')
+
+                # Screenshots from cache
+                video_file = None
+                for f in local_dir.glob('*.mp4'):
+                    if 'video_clips' not in str(f):
+                        video_file = f
+                        break
+                if video_file:
+                    cap = cv2.VideoCapture(str(video_file))
+                    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+                    for step in steps:
+                        frame_num = int(step.get('video_time', 0) * fps)
+                        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                        frame_num = max(0, min(frame_num, total_frames - 1))
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+                        ret, frame = cap.read()
+                        if ret:
+                            _, buffer = cv2.imencode('.png', frame)
+                            zf.writestr(f"{rec_name}/step_{step['index']}.png", buffer.tobytes())
+                    cap.release()
+                else:
+                    # Screenshot-format: copy from screenshots/ folder
+                    ss_dir = local_dir / 'screenshots'
+                    for step in steps:
+                        for ext in ('.jpg', '.png'):
+                            ss_file = ss_dir / f"step_{int(step.get('video_time', 0))}{ext}"
+                            if ss_file.exists():
+                                zf.writestr(f"{rec_name}/step_{step['index']}.png", ss_file.read_bytes())
+                                break
+
+        buf.seek(0)
+        return Response(buf.getvalue(), mimetype='application/zip',
+                        headers={'Content-Disposition': 'attachment; filename=selected_cases_export.zip'})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/selected_cases')
+@reviewer_login_required
+def selected_cases_page():
+    """Show Selected Cases page."""
+    return render_template('selected_cases.html')
 
 
 @app.route('/api/oss/ai_check', methods=['POST'])

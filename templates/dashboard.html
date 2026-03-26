@@ -313,6 +313,24 @@
             transition: all 0.2s;
         }
         .btn-view:hover { background: #00d9ff; color: #000; border-color: #00d9ff; }
+        .btn-select { padding:4px 10px; border:1px solid #7c4dff44; border-radius:5px; background:transparent; color:#7c4dff; cursor:pointer; font-size:0.8em; transition:all 0.2s; margin-right:4px; }
+        .btn-select:hover { background:rgba(124,77,255,0.15); }
+        .btn-select.selected { background:#7c4dff; color:#fff; border-color:#7c4dff; }
+        .selection-panel { position:fixed; right:16px; top:80px; width:260px; max-height:70vh; z-index:1000; background:#1a1a2e; border:1px solid #7c4dff44; border-radius:10px; overflow:hidden; box-shadow:0 4px 20px rgba(0,0,0,0.4); display:flex; flex-direction:column; }
+        .selection-panel-header { padding:10px 14px; background:#16213e; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #252542; cursor:pointer; }
+        .selection-panel-header span { color:#7c4dff; font-weight:bold; font-size:0.85em; }
+        .selection-panel-header button { background:none; border:none; color:#888; cursor:pointer; font-size:1em; }
+        .selection-panel-body { flex:1; overflow-y:auto; max-height:50vh; }
+        .selection-panel-body.collapsed { display:none; }
+        .sel-item { padding:6px 12px; font-size:0.72em; color:#ccc; border-bottom:1px solid #1a1a2e; display:flex; justify-content:space-between; align-items:center; }
+        .sel-item .sel-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .sel-item .sel-remove { color:#f44336; cursor:pointer; margin-left:6px; font-size:1.1em; }
+        .sel-item .sel-remove:hover { color:#ff6659; }
+        .selection-panel-actions { padding:8px 12px; border-top:1px solid #252542; display:flex; gap:6px; flex-wrap:wrap; }
+        .selection-panel-actions button, .selection-panel-actions a { padding:5px 10px; border-radius:4px; font-size:0.75em; font-weight:bold; cursor:pointer; text-decoration:none; text-align:center; }
+        .btn-show-sel { background:#7c4dff; color:#fff; border:none; flex:1; }
+        .btn-auto-sel { background:transparent; border:1px solid #4caf50; color:#4caf50; flex:1; }
+        .btn-auto-sel:hover { background:#4caf50; color:#fff; }
         .empty-state {
             text-align: center;
             padding: 80px 20px;
@@ -357,6 +375,21 @@
             <div style="color:#888;font-size:0.85em;" id="exportStatus">Preparing export...</div>
         </div>
     </div>
+    <!-- Floating selection panel -->
+    <div class="selection-panel" id="selPanel">
+        <div class="selection-panel-header" onclick="toggleSelPanel()">
+            <span>Selected (<span id="selCount">0</span>)</span>
+            <button id="selToggleBtn">_</button>
+        </div>
+        <div class="selection-panel-body" id="selBody">
+            <div id="selList" style="max-height:35vh;overflow-y:auto;"></div>
+            <div class="selection-panel-actions">
+                <a class="btn-show-sel" href="/selected_cases">Show Selected</a>
+                <button class="btn-auto-sel" onclick="autoSelectPassed()">Auto-Select Passed</button>
+            </div>
+        </div>
+    </div>
+
     <div class="stats-row" id="statsRow" style="display:none;">
         <div class="stat-card">
             <div class="stat-icon">&#128202;</div>
@@ -510,6 +543,7 @@
                     '</div>' +
                     '<div class="task-actions">' +
                     '<span class="review-badge ' + statusClass + '">' + statusLabel + '</span>' +
+                    (function(){ var ak=folder+'/'+rec.folder_name; var isSel=selectedSet.has(ak); return '<button class="btn-select'+(isSel?' selected':'')+'" data-key="'+ak+'" onclick="event.stopPropagation();toggleSelect(this,\''+ak.replace(/'/g,"\\'")+'\')">'+(isSel?'Deselect':'Select')+'</button>'; })() +
                     '<a class="btn-view" href="/oss_review/' + encodeURIComponent(rec.folder_name) + '?folder=' + encodeURIComponent(folder) + '">View</a>' +
                     '</div></div>';
             });
@@ -560,6 +594,71 @@
         document.getElementById('ossFolder').addEventListener('keydown', function(e) {
             if (e.key === 'Enter') loadDashboard();
         });
+
+        // ========== Selection System ==========
+        var selectedSet = new Set();
+        var selectedOrder = [];
+
+        async function loadSelection() {
+            try {
+                var resp = await fetch('/api/selected_cases');
+                var data = await resp.json();
+                selectedOrder = data.cases || [];
+                selectedSet = new Set(selectedOrder);
+                renderSelPanel();
+            } catch(e) {}
+        }
+
+        function renderSelPanel() {
+            document.getElementById('selCount').textContent = selectedOrder.length;
+            var html = '';
+            selectedOrder.forEach(function(key, i) {
+                var name = key.split('/').pop().substring(0, 35);
+                html += '<div class="sel-item"><span class="sel-name" title="' + key + '">' + (i+1) + '. ' + name + '</span><span class="sel-remove" onclick="removeFromSel(\'' + key.replace(/'/g, "\\'") + '\')">&times;</span></div>';
+            });
+            document.getElementById('selList').innerHTML = html || '<div style="padding:12px;color:#555;font-size:0.78em;text-align:center;">No cases selected</div>';
+            // Update all select buttons on page
+            document.querySelectorAll('.btn-select').forEach(function(btn) {
+                var k = btn.getAttribute('data-key');
+                if (selectedSet.has(k)) { btn.classList.add('selected'); btn.textContent = 'Deselect'; }
+                else { btn.classList.remove('selected'); btn.textContent = 'Select'; }
+            });
+        }
+
+        async function toggleSelect(btn, annKey) {
+            var resp = await fetch('/api/selected_cases/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ann_key:annKey}) });
+            var data = await resp.json();
+            if (data.selected) { selectedSet.add(annKey); selectedOrder.push(annKey); }
+            else { selectedSet.delete(annKey); selectedOrder = selectedOrder.filter(function(k){return k!==annKey;}); }
+            renderSelPanel();
+        }
+
+        async function removeFromSel(annKey) {
+            await fetch('/api/selected_cases/remove', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ann_key:annKey}) });
+            selectedSet.delete(annKey);
+            selectedOrder = selectedOrder.filter(function(k){return k!==annKey;});
+            renderSelPanel();
+        }
+
+        async function autoSelectPassed() {
+            var folder = document.getElementById('ossFolder').value.trim();
+            if (!folder) return;
+            var resp = await fetch('/api/selected_cases/auto_select_passed', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({folder:folder}) });
+            var data = await resp.json();
+            alert('Added ' + data.added + ' passed cases. Total: ' + data.total);
+            loadSelection();
+            // Re-render dashboard to update buttons
+            if (dashboardData) renderDashboard(dashboardData);
+        }
+
+        function toggleSelPanel() {
+            var body = document.getElementById('selBody');
+            body.classList.toggle('collapsed');
+            document.getElementById('selToggleBtn').textContent = body.classList.contains('collapsed') ? '+' : '_';
+        }
+
+        // Load selection on page init
+        loadSelection();
 
         async function exportAll() {
             const folder = document.getElementById('ossFolder').value.trim();
