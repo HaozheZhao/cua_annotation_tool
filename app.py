@@ -8834,4 +8834,4 @@ if __name__ == '__main__':
     print(f"Direct access: http://{args.host}:{args.port}/edit")
     print("Press Ctrl+C to stop\n")
 
-    app.run(host=args.host, port=args.port, debug=False)
+    app.run(host=args.host, port=args.port, debug=False, threaded=True)
