@@ -52,8 +52,11 @@ body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif
 .step-header h3 { font-size:0.9em; color:#00d9ff; }
 .step-header .badges { display:flex; gap:6px; }
 .step-body { display:flex; gap:14px; padding:14px; }
-.step-img { flex-shrink:0; }
-.step-img img { max-width:500px; max-height:350px; border-radius:4px; border:1px solid #333; }
+.step-img { flex-shrink:0; position:relative; }
+.step-img img { max-width:500px; max-height:350px; border-radius:4px; border:1px solid #333; display:block; }
+.step-img .marker { position:absolute; width:14px; height:14px; border-radius:50%; border:2px solid #f44336; background:rgba(244,67,54,0.3); transform:translate(-50%,-50%); pointer-events:none; z-index:2; }
+.step-img .marker.end { border-color:#4caf50; background:rgba(76,175,80,0.3); }
+.step-img svg.drag-overlay { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:1; }
 .step-info { flex:1; min-width:200px; }
 .step-info .field { margin-bottom:8px; }
 .step-info .field label { display:block; color:#888; font-size:0.72em; font-weight:bold; text-transform:uppercase; margin-bottom:2px; }
@@ -144,23 +147,81 @@ function renderCase(data) {
     html += '</div></div>';
 
     (data.steps || []).forEach((step, i) => {
+        const code = step.code || '';
+        const action = step.action || '';
+        // Parse coordinates from code
+        const hasCoord = /click|Click|drag|Drag|moveTo/.test(code);
+        let startX=0, startY=0, endX=0, endY=0, isDrag=false;
+        const dragMatch = code.match(/moveTo\((\d+),\s*(\d+)\).*dragTo\((\d+),\s*(\d+)\)/);
+        const clickMatch = code.match(/(click|Click)\((\d+),\s*(\d+)/);
+        if (dragMatch) { startX=+dragMatch[1]; startY=+dragMatch[2]; endX=+dragMatch[3]; endY=+dragMatch[4]; isDrag=true; }
+        else if (clickMatch) { startX=+clickMatch[2]; startY=+clickMatch[3]; }
+
         html += '<div class="step-card">';
-        html += '<div class="step-header"><h3>Step ' + i + ': ' + (step.action || '') + '</h3></div>';
+        html += '<div class="step-header"><h3>Step ' + i + ': ' + action + '</h3></div>';
         html += '<div class="step-body">';
-        // Image
+
+        // Image with coordinate overlay
         if (step.has_image) {
-            html += '<div class="step-img"><img src="/api/image/' + encodeURIComponent(data.id) + '/' + step.index + '" loading="lazy" /></div>';
+            html += '<div class="step-img" id="step-img-' + i + '">';
+            html += '<img id="img-' + i + '" src="/api/image/' + encodeURIComponent(data.id) + '/' + step.index + '" loading="lazy"';
+            if (hasCoord) html += ' onload="drawMarkers(' + i + ',' + startX + ',' + startY + ',' + endX + ',' + endY + ',' + isDrag + ')"';
+            html += ' />';
+            html += '</div>';
         }
+
         // Info
         html += '<div class="step-info">';
-        if (step.code) html += '<div class="field"><label>Code</label><div class="code">' + step.code + '</div></div>';
-        if (step.description) html += '<div class="field"><label>Description</label><div class="val">' + step.description + '</div></div>';
+        if (code) html += '<div class="field"><label>Code</label><div class="code">' + code + '</div></div>';
         if (step.justification) html += '<div class="field"><label>Justification</label><div class="justification">' + step.justification + '</div></div>';
-        if (step.coordinate) html += '<div class="field"><label>Coordinate</label><div class="val">(' + (step.coordinate.x||0) + ', ' + (step.coordinate.y||0) + ')</div></div>';
+        // Coordinate: only for click/drag, not for type/press/scroll
+        if (hasCoord && (startX || startY)) {
+            if (isDrag) {
+                html += '<div class="field"><label>Coordinate</label><div class="val">From (' + startX + ', ' + startY + ') &rarr; To (' + endX + ', ' + endY + ')</div></div>';
+            } else {
+                html += '<div class="field"><label>Coordinate</label><div class="val">(' + startX + ', ' + startY + ')</div></div>';
+            }
+        }
         html += '</div></div></div>';
     });
 
     document.getElementById('content').innerHTML = html;
+}
+
+function drawMarkers(idx, sx, sy, ex, ey, isDrag) {
+    const img = document.getElementById('img-' + idx);
+    const container = document.getElementById('step-img-' + idx);
+    if (!img || !container) return;
+    // Assume 1920x1080 original resolution
+    const origW = 1920, origH = 1080;
+    const scaleX = img.clientWidth / origW;
+    const scaleY = img.clientHeight / origH;
+
+    if (sx || sy) {
+        const m = document.createElement('div');
+        m.className = 'marker';
+        m.style.left = (sx * scaleX) + 'px';
+        m.style.top = (sy * scaleY) + 'px';
+        m.title = 'Start (' + sx + ', ' + sy + ')';
+        container.appendChild(m);
+    }
+
+    if (isDrag) {
+        // End marker
+        const m2 = document.createElement('div');
+        m2.className = 'marker end';
+        m2.style.left = (ex * scaleX) + 'px';
+        m2.style.top = (ey * scaleY) + 'px';
+        m2.title = 'End (' + ex + ', ' + ey + ')';
+        container.appendChild(m2);
+
+        // Drag line with arrow
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('class', 'drag-overlay');
+        svg.innerHTML = '<defs><marker id="ah-'+idx+'" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ff9800"/></marker></defs>' +
+            '<line x1="'+(sx*scaleX)+'" y1="'+(sy*scaleY)+'" x2="'+(ex*scaleX)+'" y2="'+(ey*scaleY)+'" stroke="#ff9800" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#ah-'+idx+')"/>';
+        container.appendChild(svg);
+    }
 }
 
 init();
