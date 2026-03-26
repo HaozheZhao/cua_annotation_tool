@@ -2436,6 +2436,8 @@ def api_oss_export_case(folder_name):
             # Write export JSON
             info = task_data.get('annotator_info', {})
             query = ann.get('query', info.get('query', ''))
+            sbs_instr = ann.get('step_by_step_instructions', '') or info.get('step_by_step_instruction', '')
+            orig_kp = task_data.get('knowledge_points', [])
             export_json = {
                 'folder_name': folder_name,
                 'query': query,
@@ -2445,10 +2447,10 @@ def api_oss_export_case(folder_name):
                 'mark': ann.get('mark'),
                 'scores': ann.get('scores', {}),
                 'pass_reason': ann.get('pass_reason', ''),
-                'step_by_step_instructions': ann.get('step_by_step_instructions', ''),
+                'step_by_step_instructions': sbs_instr,
                 'knowledge_points': {
                     'osworld_overlap': ann.get('osworld_overlap', []),
-                    'custom_nodes': ann.get('custom_nodes', []),
+                    'custom_nodes': ann.get('custom_nodes', orig_kp),
                 },
                 'related_apps': ann.get('related_apps', []),
                 'traj': traj,
@@ -2579,6 +2581,8 @@ def api_oss_export_all():
 
             info = task_data.get('annotator_info', {})
             query = ann.get('query', info.get('query', ''))
+            sbs_instr = ann.get('step_by_step_instructions', '') or info.get('step_by_step_instruction', '')
+            orig_kp = task_data.get('knowledge_points', [])
             export_json = {
                 'folder_name': rec_name,
                 'query': query,
@@ -2588,10 +2592,10 @@ def api_oss_export_all():
                 'mark': ann.get('mark'),
                 'scores': ann.get('scores', {}),
                 'pass_reason': ann.get('pass_reason', ''),
-                'step_by_step_instructions': ann.get('step_by_step_instructions', ''),
+                'step_by_step_instructions': sbs_instr,
                 'knowledge_points': {
                     'osworld_overlap': ann.get('osworld_overlap', []),
-                    'custom_nodes': ann.get('custom_nodes', []),
+                    'custom_nodes': ann.get('custom_nodes', orig_kp),
                 },
                 'related_apps': ann.get('related_apps', []),
                 'traj': traj,
@@ -2786,6 +2790,8 @@ def api_selected_cases_export():
 
                 info = task_data.get('annotator_info', {})
                 query = ann.get('query', info.get('query', ''))
+                sbs_instr = ann.get('step_by_step_instructions', '') or info.get('step_by_step_instruction', '')
+                orig_kp = task_data.get('knowledge_points', [])
                 export_json = {
                     'folder_name': rec_name,
                     'query': query,
@@ -2793,6 +2799,14 @@ def api_selected_cases_export():
                     'annotator': info.get('username', ''),
                     'task_id': info.get('task_id', ''),
                     'mark': ann.get('mark'),
+                    'scores': ann.get('scores', {}),
+                    'pass_reason': ann.get('pass_reason', ''),
+                    'step_by_step_instructions': sbs_instr,
+                    'knowledge_points': {
+                        'osworld_overlap': ann.get('osworld_overlap', []),
+                        'custom_nodes': ann.get('custom_nodes', orig_kp),
+                    },
+                    'related_apps': ann.get('related_apps', []),
                     'traj': traj,
                 }
                 zf.writestr(f"{rec_name}/export.json", json.dumps(export_json, indent=2, ensure_ascii=False))
