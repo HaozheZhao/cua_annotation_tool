@@ -2379,9 +2379,14 @@ def api_oss_export_case(folder_name):
                 elif 'click' in code.lower() and 'pyautogui.click' in code:
                     step['code'] = f"pyautogui.click({x}, {y})"
                 elif 'moveTo' in code and 'dragTo' in code:
-                    match = re.search(r'dragTo\((\d+),\s*(\d+)\)', code)
-                    if match:
-                        step['code'] = f"pyautogui.moveTo({x}, {y}); pyautogui.dragTo({match.group(1)}, {match.group(2)})"
+                    drag_adj = adj.get('drag_to', {})
+                    if drag_adj:
+                        step['code'] = f"pyautogui.moveTo({x}, {y}); pyautogui.dragTo({drag_adj['x']}, {drag_adj['y']})"
+                        step['drag_to'] = {'x': drag_adj['x'], 'y': drag_adj['y']}
+                    else:
+                        match = re.search(r'dragTo\((\d+),\s*(\d+)\)', code)
+                        if match:
+                            step['code'] = f"pyautogui.moveTo({x}, {y}); pyautogui.dragTo({match.group(1)}, {match.group(2)})"
             if si in justification_edits:
                 step['justification'] = justification_edits[si]
             # Code edits override everything (including coord-regenerated code)
@@ -2413,7 +2418,7 @@ def api_oss_export_case(folder_name):
                 x, y = coord.get('x', 0), coord.get('y', 0)
                 action = step.get('action', '')
 
-                traj.append({
+                step_data = {
                     'index': step['index'],
                     'action_type': action,
                     'code': code,
@@ -2421,7 +2426,10 @@ def api_oss_export_case(folder_name):
                     'coordinate': coord,
                     'justification': step.get('justification', ''),
                     'description': step.get('description', ''),
-                })
+                }
+                if step.get('drag_to'):
+                    step_data['drag_to'] = step['drag_to']
+                traj.append(step_data)
                 export_lines.append(json.dumps({
                     'action': action,
                     'coordinate': coord,
