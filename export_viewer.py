@@ -80,7 +80,12 @@ body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif
     <div class="stats" id="stats"></div>
 </div>
 <div class="sidebar">
-    <div style="padding:8px;"><input class="search" placeholder="Search cases..." oninput="filterCases(this.value)" /></div>
+    <div style="padding:8px;">
+        <select id="sourceFilter" class="search" onchange="filterCases()" style="margin-bottom:4px;">
+            <option value="">All Sources</option>
+        </select>
+        <input class="search" id="searchInput" placeholder="Search cases..." oninput="filterCases()" />
+    </div>
     <div id="caseList"></div>
 </div>
 <div class="content" id="content">
@@ -95,17 +100,32 @@ async function init() {
     const resp = await fetch('/api/cases');
     allCases = await resp.json();
     document.getElementById('stats').textContent = allCases.length + ' cases loaded';
+
+    // Build source dropdown
+    const sources = [...new Set(allCases.map(c => c.source_name || 'Unknown'))];
+    const sel = document.getElementById('sourceFilter');
+    sources.sort().forEach(s => {
+        const count = allCases.filter(c => (c.source_name||'Unknown') === s).length;
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.textContent = s + ' (' + count + ')';
+        sel.appendChild(opt);
+    });
+
     renderCaseList(allCases);
     if (allCases.length > 0) loadCase(allCases[0].id);
 }
 
-function filterCases(q) {
-    q = q.toLowerCase();
-    const filtered = allCases.filter(c =>
-        (c.query||'').toLowerCase().includes(q) ||
-        (c.folder_name||'').toLowerCase().includes(q) ||
-        (c.annotator||'').toLowerCase().includes(q)
-    );
+function filterCases() {
+    const q = (document.getElementById('searchInput').value || '').toLowerCase();
+    const src = document.getElementById('sourceFilter').value;
+    const filtered = allCases.filter(c => {
+        if (src && (c.source_name||'Unknown') !== src) return false;
+        if (q && !(c.query||'').toLowerCase().includes(q) &&
+            !(c.folder_name||'').toLowerCase().includes(q) &&
+            !(c.annotator||'').toLowerCase().includes(q)) return false;
+        return true;
+    });
     renderCaseList(filtered);
 }
 
@@ -122,7 +142,7 @@ function renderCaseList(cases) {
         const pct = Math.round((steps / maxSteps) * 100);
         html += '<div class="case-item' + active + '" onclick="loadCase(\\''+c.id+'\\')">' +
             '<div class="name">' + (c.query || c.folder_name || c.id).substring(0,80) + '</div>' +
-            '<div class="meta">'+ '<span>' + (c.annotator||'') + '</span>' +
+            '<div class="meta">' + badge + '<span>' + (c.annotator||'') + '</span>' +
             '<div class="step-bar"><div class="step-bar-fill" style="width:' + pct + '%"></div></div>' +
             '<span class="step-count">' + steps + '</span></div>' +
             '</div>';
@@ -132,13 +152,7 @@ function renderCaseList(cases) {
 
 async function loadCase(id) {
     currentCase = id;
-    renderCaseList(allCases.filter(c => document.querySelector('.search').value ? true : true));
-    // Re-render sidebar to update active state
-    const q = document.querySelector('.search').value.toLowerCase();
-    const filtered = allCases.filter(c =>
-        !q || (c.query||'').toLowerCase().includes(q) || (c.folder_name||'').toLowerCase().includes(q)
-    );
-    renderCaseList(filtered);
+    filterCases(); // Re-render sidebar to update active state
 
     const resp = await fetch('/api/case/' + encodeURIComponent(id));
     const data = await resp.json();
@@ -296,6 +310,7 @@ def scan_cases():
                         cases.append({
                             'id': f'zip:{zf_path.name}:{folder}',
                             'source': str(zf_path),
+                            'source_name': zf_path.stem,
                             'folder_name': folder,
                             'query': export_data.get('query', ''),
                             'annotator': export_data.get('annotator', ''),
@@ -316,6 +331,7 @@ def scan_cases():
             cases.append({
                 'id': f'dir:{folder}',
                 'source': str(export_json.parent),
+                'source_name': 'Extracted',
                 'folder_name': folder,
                 'query': export_data.get('query', ''),
                 'annotator': export_data.get('annotator', ''),
