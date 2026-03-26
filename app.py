@@ -2521,6 +2521,13 @@ def api_oss_export_case_progress():
     return jsonify(progress)
 
 
+@app.route('/api/selected_cases/export_progress')
+@reviewer_login_required
+def api_selected_cases_export_progress():
+    """Get selected cases export progress."""
+    return jsonify(_export_progress.get('selected', {'progress': 0, 'total': 0, 'status': 'idle', 'current': ''}))
+
+
 @app.route('/api/oss/export_all')
 @reviewer_login_required
 def api_oss_export_all():
@@ -2782,16 +2789,18 @@ def api_selected_cases_export():
         if not cases:
             return jsonify({'error': 'No cases selected'}), 400
 
+        _export_progress['selected'] = {'progress': 0, 'total': len(cases), 'status': 'exporting', 'current': ''}
         oss_annotations = load_oss_annotations()
         coord_adjustments = load_oss_coord_adjustments()
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-            for ann_key in cases:
+            for case_idx, ann_key in enumerate(cases):
                 parts = ann_key.split('/', 1)
                 if len(parts) != 2:
                     continue
                 oss_folder, rec_name = parts
+                _export_progress['selected'] = {'progress': case_idx, 'total': len(cases), 'status': 'exporting', 'current': rec_name[:40]}
                 ann = oss_annotations.get(ann_key, {})
                 local_dir = OSS_CACHE_DIR / rec_name
                 if not local_dir.exists():
@@ -2882,6 +2891,7 @@ def api_selected_cases_export():
                                 zf.writestr(f"{rec_name}/step_{step['index']}.png", ss_file.read_bytes())
                                 break
 
+        _export_progress['selected'] = {'progress': len(cases), 'total': len(cases), 'status': 'done', 'current': ''}
         buf.seek(0)
         return Response(buf.getvalue(), mimetype='application/zip',
                         headers={'Content-Disposition': 'attachment; filename=selected_cases_export.zip'})
