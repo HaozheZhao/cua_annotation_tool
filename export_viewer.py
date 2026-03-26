@@ -54,8 +54,10 @@ body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif
 .step-body { display:flex; gap:14px; padding:14px; }
 .step-img { flex-shrink:0; position:relative; }
 .step-img img { max-width:500px; max-height:350px; border-radius:4px; border:1px solid #333; display:block; }
-.step-img .marker { position:absolute; width:14px; height:14px; border-radius:50%; border:2px solid #f44336; background:rgba(244,67,54,0.3); transform:translate(-50%,-50%); pointer-events:none; z-index:2; }
-.step-img .marker.end { border-color:#4caf50; background:rgba(76,175,80,0.3); }
+.step-img .marker { position:absolute; width:16px; height:16px; border-radius:50%; border:2px solid #f44336; background:rgba(244,67,54,0.15); transform:translate(-50%,-50%); pointer-events:none; z-index:2; }
+.step-img .marker::after { content:''; position:absolute; top:50%; left:50%; width:4px; height:4px; border-radius:50%; background:#f44336; transform:translate(-50%,-50%); }
+.step-img .marker.end { border-color:#4caf50; background:rgba(76,175,80,0.15); }
+.step-img .marker.end::after { background:#4caf50; }
 .step-img svg.drag-overlay { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:1; }
 .step-info { flex:1; min-width:200px; }
 .step-info .field { margin-bottom:8px; }
