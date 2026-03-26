@@ -186,13 +186,15 @@
                     alert('Export failed: ' + (err.error || resp.statusText));
                     return;
                 }
-                // Show 100%
                 var bar = document.getElementById('expBar');
                 if (bar) bar.style.width = '100%';
                 var st = document.getElementById('expStatus');
-                if (st) st.textContent = 'Download ready!';
+                if (st) st.textContent = 'Preparing download...';
 
                 const blob = await resp.blob();
+                var ov = document.getElementById('expOverlay');
+                if (ov) ov.remove();
+
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
                 a.download = 'selected_cases_export.zip';
@@ -206,7 +208,7 @@
                 btn.textContent = 'Export Selected';
                 btn.disabled = false;
                 var ov = document.getElementById('expOverlay');
-                if (ov) setTimeout(function() { ov.remove(); }, 1000);
+                if (ov) ov.remove();
             }
         }
 

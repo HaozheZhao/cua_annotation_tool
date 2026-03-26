@@ -3152,9 +3152,14 @@
                 var bar = document.getElementById('exportBar');
                 if (bar) { bar.style.width = '100%'; bar.style.animation = 'none'; }
                 var status = document.getElementById('exportStatus');
-                if (status) status.textContent = 'Download ready!';
+                if (status) status.textContent = 'Preparing download...';
 
                 const blob = await resp.blob();
+
+                // Remove overlay immediately
+                var ov = document.getElementById('exportOverlay');
+                if (ov) ov.remove();
+
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
                 a.download = folderName + '.zip';
@@ -3167,7 +3172,7 @@
             } finally {
                 if (btn) { btn.textContent = 'Export Case'; btn.disabled = false; }
                 var ov = document.getElementById('exportOverlay');
-                if (ov) setTimeout(function() { ov.remove(); }, 1000);
+                if (ov) ov.remove();
             }
         }
 
