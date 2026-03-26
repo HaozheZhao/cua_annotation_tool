@@ -147,69 +147,9 @@
             document.getElementById('caseBody').innerHTML = '<tr><td colspan="6" class="empty">All cases removed.</td></tr>';
         }
 
-        async function exportSelected() {
-            const btn = document.getElementById('exportBtn');
-            btn.textContent = 'Exporting...';
-            btn.disabled = true;
-
-            // Show progress overlay
-            var overlay = document.createElement('div');
-            overlay.id = 'expOverlay';
-            overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,15,26,0.92);z-index:2000;display:flex;justify-content:center;align-items:center;';
-            overlay.innerHTML = '<div style="text-align:center;max-width:420px;width:90%;">' +
-                '<div style="color:#7c4dff;font-size:1.1em;margin-bottom:14px;">Exporting ' + selectedCases.length + ' Cases</div>' +
-                '<div style="background:#252542;border-radius:6px;height:10px;overflow:hidden;margin-bottom:8px;">' +
-                '<div id="expBar" style="height:100%;background:linear-gradient(90deg,#7c4dff,#00d9ff);width:0%;transition:width 0.3s;"></div></div>' +
-                '<div id="expStatus" style="color:#888;font-size:0.85em;">Starting export...</div></div>';
-            document.body.appendChild(overlay);
-
-            // Poll progress
-            var pollTimer = setInterval(async function() {
-                try {
-                    var r = await fetch('/api/selected_cases/export_progress');
-                    var pg = await r.json();
-                    if (pg.total > 0) {
-                        var pct = Math.round((pg.progress / pg.total) * 100);
-                        var bar = document.getElementById('expBar');
-                        var st = document.getElementById('expStatus');
-                        if (bar) bar.style.width = pct + '%';
-                        if (st) st.textContent = 'Exporting case ' + pg.progress + ' / ' + pg.total + (pg.current ? ' (' + pg.current + ')' : '');
-                    }
-                } catch(e) {}
-            }, 500);
-
-            try {
-                const resp = await fetch('/api/selected_cases/export');
-                clearInterval(pollTimer);
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({}));
-                    alert('Export failed: ' + (err.error || resp.statusText));
-                    return;
-                }
-                var bar = document.getElementById('expBar');
-                if (bar) bar.style.width = '100%';
-                var st = document.getElementById('expStatus');
-                if (st) st.textContent = 'Preparing download...';
-
-                const blob = await resp.blob();
-                var ov = document.getElementById('expOverlay');
-                if (ov) ov.remove();
-
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = 'selected_cases_export.zip';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-            } catch(e) {
-                clearInterval(pollTimer);
-                alert('Export error: ' + e.message);
-            } finally {
-                btn.textContent = 'Export Selected';
-                btn.disabled = false;
-                var ov = document.getElementById('expOverlay');
-                if (ov) ov.remove();
-            }
+        function exportSelected() {
+            // Direct browser download — no blob buffering, no stuck overlay
+            window.location.href = '/api/selected_cases/export';
         }
 
         init();
