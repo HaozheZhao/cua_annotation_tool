@@ -56,7 +56,7 @@ body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif
 .step-header .badges { display:flex; gap:6px; }
 .step-body { display:flex; gap:14px; padding:14px; }
 .step-img { flex-shrink:0; position:relative; }
-.step-img img { max-width:500px; max-height:350px; border-radius:4px; border:1px solid #333; display:block; }
+.step-img img { max-width:720px; max-height:480px; border-radius:4px; border:1px solid #333; display:block; }
 .step-img .marker { position:absolute; width:16px; height:16px; border-radius:50%; border:2px solid #f44336; background:rgba(244,67,54,0.15); transform:translate(-50%,-50%); pointer-events:none; z-index:2; }
 .step-img .marker::after { content:''; position:absolute; top:50%; left:50%; width:4px; height:4px; border-radius:50%; background:#f44336; transform:translate(-50%,-50%); }
 .step-img .marker.end { border-color:#4caf50; background:rgba(76,175,80,0.15); }
@@ -122,7 +122,7 @@ function renderCaseList(cases) {
         const pct = Math.round((steps / maxSteps) * 100);
         html += '<div class="case-item' + active + '" onclick="loadCase(\\''+c.id+'\\')">' +
             '<div class="name">' + (c.query || c.folder_name || c.id).substring(0,80) + '</div>' +
-            '<div class="meta">' + badge + '<span>' + (c.annotator||'') + '</span>' +
+            '<div class="meta">'+ '<span>' + (c.annotator||'') + '</span>' +
             '<div class="step-bar"><div class="step-bar-fill" style="width:' + pct + '%"></div></div>' +
             '<span class="step-count">' + steps + '</span></div>' +
             '</div>';
@@ -160,23 +160,33 @@ function renderCase(data) {
     (data.steps || []).forEach((step, i) => {
         const code = step.code || '';
         const action = step.action || '';
-        // Parse coordinates from code
-        const hasCoord = /click|Click|drag|Drag|moveTo/.test(code);
-        let startX=0, startY=0, endX=0, endY=0, isDrag=false;
+
+        // Parse operation type and coordinates from code
+        let opType = 'other', startX=0, startY=0, endX=0, endY=0, scrollAmount=0;
         const dragMatch = code.match(/moveTo\((\d+),\s*(\d+)\).*dragTo\((\d+),\s*(\d+)\)/);
         const clickMatch = code.match(/(click|Click)\((\d+),\s*(\d+)/);
-        if (dragMatch) { startX=+dragMatch[1]; startY=+dragMatch[2]; endX=+dragMatch[3]; endY=+dragMatch[4]; isDrag=true; }
-        else if (clickMatch) { startX=+clickMatch[2]; startY=+clickMatch[3]; }
+        const scrollMatch = code.match(/scroll\((-?\d+)\)/);
+
+        if (dragMatch) {
+            opType = 'drag';
+            startX=+dragMatch[1]; startY=+dragMatch[2]; endX=+dragMatch[3]; endY=+dragMatch[4];
+        } else if (clickMatch) {
+            opType = 'click';
+            startX=+clickMatch[2]; startY=+clickMatch[3];
+        } else if (scrollMatch) {
+            opType = 'scroll';
+            scrollAmount = +scrollMatch[1];
+        }
 
         html += '<div class="step-card">';
         html += '<div class="step-header"><h3>Step ' + i + ': ' + action + '</h3></div>';
         html += '<div class="step-body">';
 
-        // Image with coordinate overlay
+        // Image with coordinate/scroll overlay
         if (step.has_image) {
             html += '<div class="step-img" id="step-img-' + i + '">';
             html += '<img id="img-' + i + '" src="/api/image/' + encodeURIComponent(data.id) + '/' + step.index + '" loading="lazy"';
-            if (hasCoord) html += ' onload="drawMarkers(' + i + ',' + startX + ',' + startY + ',' + endX + ',' + endY + ',' + isDrag + ')"';
+            if (opType !== 'other') html += ' onload="drawMarkers(' + i + ',\'' + opType + '\',' + startX + ',' + startY + ',' + endX + ',' + endY + ',' + scrollAmount + ')"';
             html += ' />';
             html += '</div>';
         }
@@ -185,13 +195,13 @@ function renderCase(data) {
         html += '<div class="step-info">';
         if (code) html += '<div class="field"><label>Code</label><div class="code">' + code + '</div></div>';
         if (step.justification) html += '<div class="field"><label>Justification</label><div class="justification">' + step.justification + '</div></div>';
-        // Coordinate: only for click/drag, not for type/press/scroll
-        if (hasCoord && (startX || startY)) {
-            if (isDrag) {
-                html += '<div class="field"><label>Coordinate</label><div class="val">From (' + startX + ', ' + startY + ') &rarr; To (' + endX + ', ' + endY + ')</div></div>';
-            } else {
-                html += '<div class="field"><label>Coordinate</label><div class="val">(' + startX + ', ' + startY + ')</div></div>';
-            }
+        // Coordinate display
+        if (opType === 'drag') {
+            html += '<div class="field"><label>Coordinate</label><div class="val">From (' + startX + ', ' + startY + ') &rarr; To (' + endX + ', ' + endY + ')</div></div>';
+        } else if (opType === 'click' && (startX || startY)) {
+            html += '<div class="field"><label>Coordinate</label><div class="val">(' + startX + ', ' + startY + ')</div></div>';
+        } else if (opType === 'scroll') {
+            html += '<div class="field"><label>Scroll</label><div class="val">' + (scrollAmount < 0 ? 'Down' : 'Up') + ' x' + Math.abs(scrollAmount) + '</div></div>';
         }
         html += '</div></div></div>';
     });
@@ -199,25 +209,33 @@ function renderCase(data) {
     document.getElementById('content').innerHTML = html;
 }
 
-function drawMarkers(idx, sx, sy, ex, ey, isDrag) {
+function drawMarkers(idx, opType, sx, sy, ex, ey, scrollAmt) {
     const img = document.getElementById('img-' + idx);
     const container = document.getElementById('step-img-' + idx);
     if (!img || !container) return;
-    // Assume 1920x1080 original resolution
     const origW = 1920, origH = 1080;
     const scaleX = img.clientWidth / origW;
     const scaleY = img.clientHeight / origH;
+    const w = img.clientWidth, h = img.clientHeight;
 
-    if (sx || sy) {
+    if (opType === 'click' && (sx || sy)) {
+        // Click marker: red circle with center dot
         const m = document.createElement('div');
         m.className = 'marker';
         m.style.left = (sx * scaleX) + 'px';
         m.style.top = (sy * scaleY) + 'px';
-        m.title = 'Start (' + sx + ', ' + sy + ')';
+        m.title = '(' + sx + ', ' + sy + ')';
         container.appendChild(m);
     }
 
-    if (isDrag) {
+    if (opType === 'drag') {
+        // Start marker
+        const m1 = document.createElement('div');
+        m1.className = 'marker';
+        m1.style.left = (sx * scaleX) + 'px';
+        m1.style.top = (sy * scaleY) + 'px';
+        m1.title = 'Start (' + sx + ', ' + sy + ')';
+        container.appendChild(m1);
         // End marker
         const m2 = document.createElement('div');
         m2.className = 'marker end';
@@ -225,12 +243,30 @@ function drawMarkers(idx, sx, sy, ex, ey, isDrag) {
         m2.style.top = (ey * scaleY) + 'px';
         m2.title = 'End (' + ex + ', ' + ey + ')';
         container.appendChild(m2);
-
-        // Drag line with arrow
+        // Arrow line
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         svg.setAttribute('class', 'drag-overlay');
         svg.innerHTML = '<defs><marker id="ah-'+idx+'" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ff9800"/></marker></defs>' +
             '<line x1="'+(sx*scaleX)+'" y1="'+(sy*scaleY)+'" x2="'+(ex*scaleX)+'" y2="'+(ey*scaleY)+'" stroke="#ff9800" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#ah-'+idx+')"/>';
+        container.appendChild(svg);
+    }
+
+    if (opType === 'scroll') {
+        // Scroll arrow in the center of the image
+        const isDown = scrollAmt < 0;
+        const amt = Math.abs(scrollAmt);
+        const cx = w / 2, cy = h / 2;
+        const arrowLen = Math.min(80, h * 0.15);
+        const y1 = isDown ? cy - arrowLen/2 : cy + arrowLen/2;
+        const y2 = isDown ? cy + arrowLen/2 : cy - arrowLen/2;
+        const color = isDown ? '#2196f3' : '#ff9800';
+
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('class', 'drag-overlay');
+        svg.innerHTML = '<defs><marker id="sa-'+idx+'" markerWidth="10" markerHeight="8" refX="10" refY="4" orient="auto"><polygon points="0 0, 10 4, 0 8" fill="'+color+'"/></marker></defs>' +
+            '<line x1="'+cx+'" y1="'+y1+'" x2="'+cx+'" y2="'+y2+'" stroke="'+color+'" stroke-width="3" marker-end="url(#sa-'+idx+')"/>' +
+            '<text x="'+(cx+12)+'" y="'+cy+'" fill="'+color+'" font-size="14" font-weight="bold" dominant-baseline="middle">' +
+            (isDown ? '\u2193' : '\u2191') + ' x' + amt + '</text>';
         container.appendChild(svg);
     }
 }
