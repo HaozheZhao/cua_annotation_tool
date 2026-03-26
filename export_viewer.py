@@ -37,7 +37,10 @@ body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif
 .case-item:hover { background:#1a1a2e; }
 .case-item.active { background:#16213e; border-left:3px solid #00d9ff; }
 .case-item .name { font-size:0.82em; color:#ccc; word-break:break-all; }
-.case-item .meta { font-size:0.72em; color:#888; margin-top:3px; }
+.case-item .meta { font-size:0.72em; color:#888; margin-top:3px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.case-item .step-bar { flex:1; min-width:40px; height:4px; background:#252542; border-radius:2px; overflow:hidden; }
+.case-item .step-bar-fill { height:100%; background:linear-gradient(90deg,#00d9ff,#7c4dff); border-radius:2px; }
+.case-item .step-count { color:#00d9ff; font-weight:bold; font-size:0.9em; min-width:20px; text-align:right; }
 .case-item .badge { display:inline-block; padding:1px 6px; border-radius:3px; font-size:0.68em; font-weight:bold; margin-right:4px; }
 .badge-pass { background:rgba(76,175,80,0.2); color:#4caf50; }
 .badge-fail { background:rgba(244,67,54,0.2); color:#f44336; }
@@ -107,15 +110,21 @@ function filterCases(q) {
 }
 
 function renderCaseList(cases) {
+    // Find max steps for scaling the bar
+    const maxSteps = Math.max(1, ...cases.map(c => c.step_count || 0));
     let html = '';
     cases.forEach(c => {
         const badge = c.mark === 'pass' ? '<span class="badge badge-pass">PASS</span>' :
                       c.mark === 'fail' ? '<span class="badge badge-fail">FAIL</span>' :
                       '<span class="badge badge-none">-</span>';
         const active = currentCase === c.id ? ' active' : '';
+        const steps = c.step_count || 0;
+        const pct = Math.round((steps / maxSteps) * 100);
         html += '<div class="case-item' + active + '" onclick="loadCase(\\''+c.id+'\\')">' +
             '<div class="name">' + (c.query || c.folder_name || c.id).substring(0,80) + '</div>' +
-            '<div class="meta">' + badge + (c.annotator||'') + ' | ' + (c.step_count||0) + ' steps</div>' +
+            '<div class="meta">' + badge + '<span>' + (c.annotator||'') + '</span>' +
+            '<div class="step-bar"><div class="step-bar-fill" style="width:' + pct + '%"></div></div>' +
+            '<span class="step-count">' + steps + '</span></div>' +
             '</div>';
     });
     document.getElementById('caseList').innerHTML = html || '<div class="empty" style="padding:20px;">No cases found</div>';
