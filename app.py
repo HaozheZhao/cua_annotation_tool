@@ -81,6 +81,7 @@ OSS_CACHE_DIR = Path(os.environ.get('CUA_OSS_CACHE', './oss_cache'))
 REVIEW_STATUS_FILE = Path(os.environ.get('CUA_REVIEW_STATUS', './review_status.json'))
 OSS_ANNOTATIONS_FILE = Path(os.environ.get('CUA_OSS_ANNOTATIONS', './oss_annotations.json'))
 OSS_COORD_ADJUSTMENTS_FILE = Path(os.environ.get('CUA_OSS_COORD_ADJ', './oss_coord_adjustments.json'))
+SELECTED_CASES_FILE = Path(os.environ.get('CUA_SELECTED_CASES', './selected_cases.json'))
 
 # Server-side dashboard cache: { folder_name: { annotators: {...}, folder: str, _timestamp: float } }
 _dashboard_cache = {}
@@ -506,6 +507,12 @@ def load_oss_coord_adjustments():
 def save_oss_coord_adjustments(adjustments):
     """Save OSS coordinate adjustments."""
     _safe_save_json(OSS_COORD_ADJUSTMENTS_FILE, adjustments)
+
+def load_selected_cases():
+    return _safe_load_json(SELECTED_CASES_FILE)
+
+def save_selected_cases(data):
+    _safe_save_json(SELECTED_CASES_FILE, data)
 
 def _build_case_overlay(oss_folder, folder_name):
     """Build the complete overlay dict for a case by merging annotations + coord adjustments.
@@ -3160,6 +3167,16 @@ DASHBOARD_TEMPLATE = '''
             transition: all 0.2s;
         }
         .btn-view:hover { background: #00d9ff; color: #000; border-color: #00d9ff; }
+        .btn-select{padding:4px 10px;border:1px solid #7c4dff44;border-radius:5px;background:transparent;color:#7c4dff;cursor:pointer;font-size:0.8em;margin-right:4px}
+        .btn-select:hover{background:rgba(124,77,255,0.15)}.btn-select.selected{background:#7c4dff;color:#fff;border-color:#7c4dff}
+        .selection-panel{position:fixed;right:16px;top:80px;width:240px;max-height:60vh;z-index:1000;background:#1a1a2e;border:1px solid #7c4dff44;border-radius:10px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.4);display:flex;flex-direction:column}
+        .sel-hdr{padding:8px 12px;background:#16213e;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #252542;cursor:pointer}
+        .sel-hdr span{color:#7c4dff;font-weight:bold;font-size:0.82em}.sel-hdr button{background:none;border:none;color:#888;cursor:pointer}
+        .sel-body{flex:1;overflow-y:auto;max-height:40vh}.sel-body.collapsed{display:none}
+        .sel-item{padding:5px 10px;font-size:0.7em;color:#ccc;border-bottom:1px solid #1a1a2e;display:flex;justify-content:space-between}
+        .sel-actions{padding:6px 10px;border-top:1px solid #252542;display:flex;gap:4px}
+        .sel-actions a,.sel-actions button{padding:4px 8px;border-radius:4px;font-size:0.72em;font-weight:bold;cursor:pointer;text-decoration:none;text-align:center;flex:1}
+        .btn-show-sel{background:#7c4dff;color:#fff;border:none}.btn-auto-sel{background:transparent;border:1px solid #4caf50;color:#4caf50}
         .empty-state {
             text-align: center;
             padding: 80px 20px;
@@ -3203,6 +3220,11 @@ DASHBOARD_TEMPLATE = '''
             </div>
             <div style="color:#888;font-size:0.85em;" id="exportStatus">Preparing export...</div>
         </div>
+    </div>
+    <div class="selection-panel" id="selPanel">
+        <div class="sel-hdr" onclick="toggleSelPanel()"><span>Selected (<span id="selCount">0</span>)</span><button id="selBtn">_</button></div>
+        <div class="sel-body" id="selBody"><div id="selList"></div>
+        <div class="sel-actions"><a class="btn-show-sel" href="/selected_cases">Show</a><button class="btn-auto-sel" onclick="autoSelectPassed()">Auto-Select Passed</button></div></div>
     </div>
     <div class="stats-row" id="statsRow" style="display:none;">
         <div class="stat-card">
@@ -3357,6 +3379,7 @@ DASHBOARD_TEMPLATE = '''
                     '</div>' +
                     '<div class="task-actions">' +
                     '<span class="review-badge ' + statusClass + '">' + statusLabel + '</span>' +
+                    (function(){var ak=folder+'/'+rec.folder_name;var s=selectedSet.has(ak);return '<button class="btn-select'+(s?' selected':'')+'" data-key="'+ak+'" onclick="event.stopPropagation();toggleSelect(this,\''+ak.replace(/'/g,"\\\\'")+'\')">'+(s?'Deselect':'Select')+'</button>'})() +
                     '<a class="btn-view" href="/oss_review/' + encodeURIComponent(rec.folder_name) + '?folder=' + encodeURIComponent(folder) + '">View</a>' +
                     '</div></div>';
             });
@@ -3407,6 +3430,21 @@ DASHBOARD_TEMPLATE = '''
         document.getElementById('ossFolder').addEventListener('keydown', function(e) {
             if (e.key === 'Enter') loadDashboard();
         });
+
+        // ========== Selection System ==========
+        var selectedSet = new Set();
+        var selectedOrder = [];
+        async function loadSelection(){try{var r=await fetch('/api/selected_cases');var d=await r.json();selectedOrder=d.cases||[];selectedSet=new Set(selectedOrder);renderSelPanel()}catch(e){}}
+        function renderSelPanel(){document.getElementById('selCount').textContent=selectedOrder.length;
+            var h='';selectedOrder.forEach(function(k,i){var nm=k.split('/').pop().substring(0,30);h+='<div class="sel-item"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(i+1)+'. '+nm+'</span><span style="color:#f44336;cursor:pointer;margin-left:4px" onclick="removeFromSel(\''+k.replace(/'/g,"\\\\'")+'\')">&times;</span></div>'});
+            document.getElementById('selList').innerHTML=h||'<div style="padding:10px;color:#555;font-size:0.75em;text-align:center">No cases selected</div>';
+            document.querySelectorAll('.btn-select').forEach(function(b){var k=b.getAttribute('data-key');if(selectedSet.has(k)){b.classList.add('selected');b.textContent='Deselect'}else{b.classList.remove('selected');b.textContent='Select'}})}
+        async function toggleSelect(btn,ak){var r=await fetch('/api/selected_cases/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ann_key:ak})});var d=await r.json();
+            if(d.selected){selectedSet.add(ak);selectedOrder.push(ak)}else{selectedSet.delete(ak);selectedOrder=selectedOrder.filter(function(k){return k!==ak})}renderSelPanel()}
+        async function removeFromSel(ak){await fetch('/api/selected_cases/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ann_key:ak})});selectedSet.delete(ak);selectedOrder=selectedOrder.filter(function(k){return k!==ak});renderSelPanel()}
+        async function autoSelectPassed(){var f=document.getElementById('ossFolder').value.trim();if(!f)return;var r=await fetch('/api/selected_cases/auto_select_passed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:f})});var d=await r.json();alert('Added '+d.added+' passed cases. Total: '+d.total);loadSelection();if(dashboardData)renderDashboard(dashboardData)}
+        function toggleSelPanel(){var b=document.getElementById('selBody');b.classList.toggle('collapsed');document.getElementById('selBtn').textContent=b.classList.contains('collapsed')?'+':'_'}
+        loadSelection();
 
         async function exportAll() {
             const folder = document.getElementById('ossFolder').value.trim();
@@ -7991,6 +8029,111 @@ def api_oss_export_progress():
     return jsonify({'total': total, 'cached': cached})
 
 
+# ============================================================================
+# Selected Cases API
+# ============================================================================
+
+@app.route('/api/selected_cases')
+@reviewer_login_required
+def api_selected_cases():
+    data = load_selected_cases()
+    return jsonify({'cases': data.get('cases', []), 'selected_at': data.get('selected_at', {}), 'count': len(data.get('cases', []))})
+
+@app.route('/api/selected_cases/toggle', methods=['POST'])
+@reviewer_login_required
+def api_selected_cases_toggle():
+    ann_key = request.json.get('ann_key', '')
+    if not ann_key: return jsonify({'error': 'Missing ann_key'}), 400
+    data = load_selected_cases()
+    cases = data.get('cases', [])
+    selected_at = data.get('selected_at', {})
+    if ann_key in cases:
+        cases.remove(ann_key); selected_at.pop(ann_key, None); selected = False
+    else:
+        cases.append(ann_key); selected_at[ann_key] = datetime.utcnow().isoformat() + 'Z'; selected = True
+    save_selected_cases({'cases': cases, 'selected_at': selected_at})
+    return jsonify({'selected': selected, 'count': len(cases)})
+
+@app.route('/api/selected_cases/auto_select_passed', methods=['POST'])
+@reviewer_login_required
+def api_selected_cases_auto_select_passed():
+    folder = request.json.get('folder', '')
+    if not folder: return jsonify({'error': 'Missing folder'}), 400
+    oss_annotations = load_oss_annotations()
+    data = load_selected_cases()
+    cases = data.get('cases', []); selected_at = data.get('selected_at', {}); existing = set(cases)
+    added = 0
+    for ak, ann in oss_annotations.items():
+        if ak.startswith(folder + '/') and ann.get('mark') == 'pass' and ak not in existing:
+            cases.append(ak); selected_at[ak] = datetime.utcnow().isoformat() + 'Z'; added += 1
+    save_selected_cases({'cases': cases, 'selected_at': selected_at})
+    return jsonify({'added': added, 'total': len(cases)})
+
+@app.route('/api/selected_cases/remove', methods=['POST'])
+@reviewer_login_required
+def api_selected_cases_remove():
+    ann_key = request.json.get('ann_key', '')
+    data = load_selected_cases()
+    cases = data.get('cases', []); selected_at = data.get('selected_at', {})
+    if ann_key in cases: cases.remove(ann_key); selected_at.pop(ann_key, None)
+    save_selected_cases({'cases': cases, 'selected_at': selected_at})
+    return jsonify({'success': True, 'count': len(cases)})
+
+@app.route('/api/selected_cases/export')
+@reviewer_login_required
+def api_selected_cases_export():
+    """Export all selected cases as a zip."""
+    try:
+        import cv2
+        data = load_selected_cases()
+        cases = data.get('cases', [])
+        if not cases: return jsonify({'error': 'No cases selected'}), 400
+        oss_annotations = load_oss_annotations()
+        coord_adjustments = load_oss_coord_adjustments()
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for ann_key in cases:
+                parts = ann_key.split('/', 1)
+                if len(parts) != 2: continue
+                oss_folder, rec_name = parts
+                ann = oss_annotations.get(ann_key, {})
+                local_dir = OSS_CACHE_DIR / rec_name
+                if not local_dir.exists(): continue
+                task_data = load_oss_task_data(local_dir)
+                if not task_data: continue
+                steps = task_data.get('steps', [])
+                je = ann.get('justification_edits', {}); ce = ann.get('code_edits', {}); ds = set(ann.get('deleted_steps', []))
+                for s in steps:
+                    si = str(s['index'])
+                    if si in je: s['justification'] = je[si]
+                    if si in ce: s['code'] = ce[si]
+                if ds: steps = [s for s in steps if s['index'] not in ds]
+                traj = [{'index':s['index'],'action_type':s.get('action',''),'code':s.get('code',''),'screenshot':f"step_{s['index']}.png",'coordinate':s.get('coordinate',{}),'justification':s.get('justification',''),'description':s.get('description','')} for s in steps]
+                info = task_data.get('annotator_info', {})
+                export_json = {'folder_name':rec_name,'query':ann.get('query',info.get('query','')),'annotator':info.get('username',''),'task_id':info.get('task_id',''),'mark':ann.get('mark'),'traj':traj}
+                zf.writestr(f"{rec_name}/export.json", json.dumps(export_json, indent=2, ensure_ascii=False))
+                zf.writestr(f"{rec_name}/events.jsonl", '\n'.join([json.dumps({'action':t['action_type'],'coordinate':t['coordinate'],'justification':t['justification'],'description':t['description'],'code':t['code']}, ensure_ascii=False) for t in traj]) + '\n')
+                video_file = None
+                for f in local_dir.glob('*.mp4'):
+                    if 'video_clips' not in str(f): video_file = f; break
+                if video_file:
+                    cap = cv2.VideoCapture(str(video_file)); fps = cap.get(cv2.CAP_PROP_FPS) or 30
+                    for s in steps:
+                        fn = int(s.get('video_time',0)*fps); tf = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)); fn = max(0,min(fn,tf-1))
+                        cap.set(cv2.CAP_PROP_POS_FRAMES,fn); ret,frame = cap.read()
+                        if ret: _,b = cv2.imencode('.png',frame); zf.writestr(f"{rec_name}/step_{s['index']}.png",b.tobytes())
+                    cap.release()
+        buf.seek(0)
+        return Response(buf.getvalue(), mimetype='application/zip', headers={'Content-Disposition':'attachment; filename=selected_export.zip'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/selected_cases')
+@reviewer_login_required
+def selected_cases_page():
+    return render_template_string(SELECTED_CASES_TEMPLATE)
+
+
 @app.route('/api/oss/ai_check', methods=['POST'])
 @any_login_required
 def api_oss_ai_check():
@@ -8353,6 +8496,43 @@ ANNOTATOR_DASHBOARD_TEMPLATE = '''
     </script>
 </body>
 </html>
+'''
+
+SELECTED_CASES_TEMPLATE = '''
+<!DOCTYPE html>
+<html><head><title>Selected Cases</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,sans-serif;background:#0a0a14;color:#e0e0e0;min-height:100vh}
+.header{background:linear-gradient(135deg,#1a1a2e,#16213e);padding:14px 24px;border-bottom:2px solid #7c4dff;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}
+.header h1{font-size:1.2em;color:#7c4dff}.count-badge{background:#7c4dff;color:#fff;padding:4px 12px;border-radius:12px;font-weight:bold}
+.btn{padding:8px 18px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:0.85em}
+.btn-export{background:#4caf50;color:#fff}.btn-back{background:transparent;border:1px solid #7c4dff;color:#7c4dff;text-decoration:none;padding:6px 14px;border-radius:6px;font-size:0.85em}
+.content{max-width:1200px;margin:20px auto;padding:0 20px}
+table{width:100%;border-collapse:collapse}th{text-align:left;padding:10px 14px;background:#16213e;color:#888;font-size:0.78em;border-bottom:1px solid #252542}
+td{padding:10px 14px;border-bottom:1px solid #1a1a2e;font-size:0.85em}tr:hover{background:#16213e}
+.btn-remove{padding:4px 10px;border:1px solid #f44336;border-radius:4px;background:transparent;color:#f44336;cursor:pointer;font-size:0.78em}
+.btn-view{padding:4px 10px;border:1px solid #00d9ff;border-radius:4px;background:transparent;color:#00d9ff;text-decoration:none;font-size:0.78em}
+.empty{text-align:center;padding:60px;color:#555}
+</style></head><body>
+<div class="header"><div style="display:flex;align-items:center;gap:12px"><h1>Selected Cases</h1><span class="count-badge" id="cnt">0</span></div>
+<div style="display:flex;gap:10px"><button class="btn btn-export" id="expBtn" onclick="doExport()">Export Selected</button><a class="btn-back" href="/dashboard">Dashboard</a></div></div>
+<div class="content"><table><thead><tr><th>#</th><th>Case</th><th>Annotator</th><th>Status</th><th>Actions</th></tr></thead><tbody id="tbody"><tr><td colspan="5" class="empty">Loading...</td></tr></tbody></table></div>
+<script>
+var cases=[];
+async function init(){var r=await fetch('/api/selected_cases');var d=await r.json();cases=d.cases||[];document.getElementById('cnt').textContent=cases.length;
+if(!cases.length){document.getElementById('tbody').innerHTML='<tr><td colspan="5" class="empty">No cases selected</td></tr>';return}
+var folders=new Set(cases.map(function(k){return k.split('/')[0]}));var recs={};
+for(var f of folders){try{var r2=await fetch('/api/oss/dashboard_data?folder='+encodeURIComponent(f));var dd=await r2.json();
+if(dd.annotators){for(var u in dd.annotators){(dd.annotators[u].recordings||[]).forEach(function(rec){recs[f+'/'+rec.folder_name]=rec})}}}catch(e){}}
+var h='';cases.forEach(function(k,i){var rc=recs[k]||{};var nm=rc.task_name||rc.task_id||k.split('/').pop().substring(0,40);var fn=k.split('/').slice(1).join('/');var fl=k.split('/')[0];
+h+='<tr id="r'+i+'"><td style="color:#7c4dff;font-weight:bold">'+(i+1)+'</td><td style="max-width:400px;word-break:break-all;color:#ccc">'+nm+'</td><td>'+(rc._username||'-')+'</td><td>'+(rc.review_status||'-')+'</td><td><a class="btn-view" href="/oss_review/'+encodeURIComponent(fn)+'?folder='+encodeURIComponent(fl)+'" target="_blank">View</a> <button class="btn-remove" onclick="rem(\''+k.replace(/'/g,"\\'")+'\','+i+')">Remove</button></td></tr>'});
+document.getElementById('tbody').innerHTML=h}
+async function rem(k,i){await fetch('/api/selected_cases/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ann_key:k})});
+var r=document.getElementById('r'+i);if(r)r.remove();cases=cases.filter(function(x){return x!==k});document.getElementById('cnt').textContent=cases.length}
+async function doExport(){var b=document.getElementById('expBtn');b.textContent='Exporting...';b.disabled=true;
+try{var r=await fetch('/api/selected_cases/export');if(!r.ok){alert('Export failed');return}var bl=await r.blob();var a=document.createElement('a');a.href=URL.createObjectURL(bl);a.download='selected_export.zip';document.body.appendChild(a);a.click();document.body.removeChild(a)}catch(e){alert('Error: '+e.message)}finally{b.textContent='Export Selected';b.disabled=false}}
+init();
+</script></body></html>
 '''
 
 DIRECT_ACCESS_TEMPLATE = '''
