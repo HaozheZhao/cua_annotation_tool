@@ -38,3 +38,7 @@ export/
 # Annotation state (optional - uncomment to exclude)
 # annotations.json
 # coordinate_adjustments.json
+
+# Selection and cache state
+selected_cases.json
+dashboard_cache.json
