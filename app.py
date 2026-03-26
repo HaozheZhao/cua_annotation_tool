@@ -3285,8 +3285,15 @@ DASHBOARD_TEMPLATE = '''
 
             const loadBtn = document.getElementById('loadBtn');
             loadBtn.disabled = true;
-            loadBtn.textContent = '';
+            loadBtn.textContent = 'Loading...';
             loadBtn.classList.add('loading');
+
+            // Show loading indicator in content area
+            document.getElementById('content').innerHTML =
+                '<div style="text-align:center;padding:60px;">' +
+                '<div style="display:inline-block;width:40px;height:40px;border:3px solid #333;border-top-color:#00d9ff;border-radius:50%;animation:spin 0.8s linear infinite;margin-bottom:16px;"></div>' +
+                '<div style="color:#00d9ff;font-size:1.1em;margin-bottom:8px;">Loading recordings from OSS...</div>' +
+                '<div style="color:#666;font-size:0.85em;">This may take a minute for the first load</div></div>';
 
             try {
                 const resp = await fetch('/api/oss/dashboard_data?folder=' + encodeURIComponent(folder));
