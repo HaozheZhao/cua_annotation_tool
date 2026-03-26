@@ -7307,8 +7307,11 @@ def api_oss_task(folder_name):
 
         prefix = oss_folder.rstrip('/') + '/' + folder_name
 
-        # Step 1: Download overlay from OSS -> merge into local files
-        _load_overlay_from_oss(oss_folder, folder_name)
+        # Step 1: Download overlay from OSS only if no local data for this case
+        ann_key_check = f"{oss_folder}/{folder_name}"
+        local_annotations = load_oss_annotations()
+        if not local_annotations.get(ann_key_check):
+            _load_overlay_from_oss(oss_folder, folder_name)
 
         # Step 2: Create local cache directory (read-only mirror of OSS)
         local_dir = OSS_CACHE_DIR / folder_name
