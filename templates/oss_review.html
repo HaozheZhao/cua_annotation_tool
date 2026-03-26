@@ -3123,12 +3123,19 @@
             document.body.appendChild(overlay);
 
             try {
-                // Animate progress while waiting
-                var pct = 10;
-                var progressInterval = setInterval(function() {
-                    pct = Math.min(pct + 2, 90);
-                    var bar = document.getElementById('exportBar');
-                    if (bar) bar.style.width = pct + '%';
+                // Poll real progress from server
+                var progressInterval = setInterval(async function() {
+                    try {
+                        var pr = await fetch('/api/oss/export_case_progress?folder_name=' + encodeURIComponent(folderName) + '&folder=' + encodeURIComponent(ossFolder));
+                        var pg = await pr.json();
+                        if (pg.total > 0) {
+                            var pct = Math.round((pg.progress / pg.total) * 100);
+                            var bar = document.getElementById('exportBar');
+                            var status = document.getElementById('exportStatus');
+                            if (bar) bar.style.width = pct + '%';
+                            if (status) status.textContent = 'Extracting screenshots: ' + pg.progress + ' / ' + pg.total + ' steps';
+                        }
+                    } catch(e) {}
                 }, 500);
 
                 const url = '/api/oss/export_case/' + encodeURIComponent(folderName) + '?folder=' + encodeURIComponent(ossFolder);

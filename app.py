@@ -97,6 +97,9 @@ AI_CHECK_BATCH_SIZE = 1  # Sequential inference for accuracy
 _ai_check_tasks = {}
 _ai_check_lock = threading.Lock()
 
+# Export progress tracker: { ann_key: {progress, total, status} }
+_export_progress = {}
+
 AI_CHECK_SYSTEM_PROMPT = """You are a strict quality assurance AI for CUA (Computer Use Agent) task annotations.
 You review individual steps of GUI operations recorded by human annotators performing tasks on an Ubuntu desktop.
 
@@ -2465,11 +2468,14 @@ def api_oss_export_case(folder_name):
             }
             zf.writestr(f"{folder_name}/export.json", json.dumps(export_json, indent=2, ensure_ascii=False))
 
-            # Extract and save screenshots
+            # Extract and save screenshots with progress tracking
+            total_steps = len(steps)
+            _export_progress[ann_key] = {'progress': 0, 'total': total_steps, 'status': 'extracting'}
+
             if video_file:
                 cap = cv2.VideoCapture(str(video_file))
                 fps = cap.get(cv2.CAP_PROP_FPS) or 30
-                for step in steps:
+                for si, step in enumerate(steps):
                     frame_num = int(step.get('video_time', 0) * fps)
                     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
                     frame_num = max(0, min(frame_num, total_frames - 1))
@@ -2478,8 +2484,20 @@ def api_oss_export_case(folder_name):
                     if ret:
                         _, buffer = cv2.imencode('.png', frame)
                         zf.writestr(f"{folder_name}/step_{step['index']}.png", buffer.tobytes())
+                    _export_progress[ann_key] = {'progress': si + 1, 'total': total_steps, 'status': 'extracting'}
                 cap.release()
+            else:
+                # Screenshot-format: copy from screenshots/ or _frames/
+                ss_dir = local_dir / 'screenshots'
+                for si, step in enumerate(steps):
+                    for ext in ('.jpg', '.png'):
+                        ss_file = ss_dir / f"step_{int(step.get('video_time', 0))}{ext}"
+                        if ss_file.exists():
+                            zf.writestr(f"{folder_name}/step_{step['index']}.png", ss_file.read_bytes())
+                            break
+                    _export_progress[ann_key] = {'progress': si + 1, 'total': total_steps, 'status': 'extracting'}
 
+        _export_progress[ann_key] = {'progress': total_steps, 'total': total_steps, 'status': 'done'}
         buf.seek(0)
         return Response(
             buf.getvalue(),
@@ -2490,6 +2508,17 @@ def api_oss_export_case(folder_name):
         import traceback
         traceback.print_exc()
         return jsonify({'error': f'Export failed: {str(e)}'}), 500
+
+
+@app.route('/api/oss/export_case_progress')
+@any_login_required
+def api_oss_export_case_progress():
+    """Get export progress for a case."""
+    folder_name = request.args.get('folder_name', '')
+    oss_folder = request.args.get('folder', 'recordings_0303')
+    ann_key = f"{oss_folder}/{folder_name}"
+    progress = _export_progress.get(ann_key, {'progress': 0, 'total': 0, 'status': 'idle'})
+    return jsonify(progress)
 
 
 @app.route('/api/oss/export_all')
