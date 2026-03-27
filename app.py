@@ -85,11 +85,15 @@ DATA_DIR = Path(os.environ.get('CUA_DATA_DIR', './data'))
 CSV_FILE = Path(os.environ.get('CUA_CSV_FILE', './task_assignments.csv'))
 OUTPUT_DIR = Path(os.environ.get('CUA_OUTPUT_DIR', './output'))
 ANNOTATIONS_FILE = Path(os.environ.get('CUA_ANNOTATIONS_FILE', './annotations.json'))
+# Data files stored OUTSIDE git repo to prevent git operations from wiping them
+_CUA_DATA_HOME = Path(os.environ.get('CUA_DATA_HOME', os.path.expanduser('~/.cua_data')))
+_CUA_DATA_HOME.mkdir(parents=True, exist_ok=True)
+
 OSS_CACHE_DIR = Path(os.environ.get('CUA_OSS_CACHE', './oss_cache'))
-REVIEW_STATUS_FILE = Path(os.environ.get('CUA_REVIEW_STATUS', './review_status.json'))
-OSS_ANNOTATIONS_FILE = Path(os.environ.get('CUA_OSS_ANNOTATIONS', './oss_annotations.json'))
-OSS_COORD_ADJUSTMENTS_FILE = Path(os.environ.get('CUA_OSS_COORD_ADJ', './oss_coord_adjustments.json'))
-SELECTED_CASES_FILE = Path(os.environ.get('CUA_SELECTED_CASES', './selected_cases.json'))
+REVIEW_STATUS_FILE = Path(os.environ.get('CUA_REVIEW_STATUS', str(_CUA_DATA_HOME / 'review_status.json')))
+OSS_ANNOTATIONS_FILE = Path(os.environ.get('CUA_OSS_ANNOTATIONS', str(_CUA_DATA_HOME / 'oss_annotations.json')))
+OSS_COORD_ADJUSTMENTS_FILE = Path(os.environ.get('CUA_OSS_COORD_ADJ', str(_CUA_DATA_HOME / 'oss_coord_adjustments.json')))
+SELECTED_CASES_FILE = Path(os.environ.get('CUA_SELECTED_CASES', str(_CUA_DATA_HOME / 'selected_cases.json')))
 
 # Server-side dashboard cache: { folder_name: { annotators: {...}, folder: str, _timestamp: float } }
 _dashboard_cache = {}
