@@ -24,10 +24,18 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'cua-annotation-tool-secret-key-2026')
 app.permanent_session_lifetime = 86400  # 24 hours
 
-# Authentication config
+# Authentication config — add reviewer accounts: {'username': 'password'}
 REVIEWER_ACCOUNTS = {
     'admin': '1qazXSW@3edc',
+    'reviewer1': 'reviewer1',
+    'reviewer2': 'reviewer2',
+    'reviewer3': 'reviewer3',
+    'reviewer4': 'reviewer4',
+    'reviewer5': 'reviewer5',
 }
+
+# File write lock — prevents concurrent JSON corruption from multiple reviewers
+_file_write_lock = threading.Lock()
 
 
 def reviewer_login_required(f):
@@ -439,7 +447,11 @@ def save_review_status(status):
     _safe_save_json(REVIEW_STATUS_FILE, status)
 
 def _safe_load_json(filepath):
-    """Load JSON file with error recovery. If corrupted, try backup or return empty dict."""
+    """Load JSON with thread lock and error recovery."""
+    with _file_write_lock:
+        return _safe_load_json_inner(filepath)
+
+def _safe_load_json_inner(filepath):
     filepath = Path(filepath)
     if not filepath.exists():
         return {}
@@ -466,7 +478,11 @@ def _safe_load_json(filepath):
 
 
 def _safe_save_json(filepath, data):
-    """Save JSON file atomically — write to temp file then rename to prevent corruption."""
+    """Save JSON with thread lock — safe for concurrent reviewers."""
+    with _file_write_lock:
+        _safe_save_json_inner(filepath, data)
+
+def _safe_save_json_inner(filepath, data):
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
     tmp_file = filepath.with_suffix('.json.tmp')
