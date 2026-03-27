@@ -550,10 +550,29 @@ def _try_recover_from_oss():
         logger.error(f"Auto-recovery failed: {e}")
 
 def save_oss_annotations(annotations, updated_key=None):
-    """Save OSS recording annotations. If updated_key provided, updates its _last_updated."""
     if updated_key and updated_key in annotations and isinstance(annotations[updated_key], dict):
         annotations[updated_key]['_last_updated'] = datetime.utcnow().isoformat() + 'Z'
     _safe_save_json(OSS_ANNOTATIONS_FILE, annotations)
+
+def modify_oss_annotation(ann_key, modifier_fn):
+    """Atomically load->modify->save with lock to prevent concurrent races."""
+    with _file_write_lock:
+        data = {}
+        if OSS_ANNOTATIONS_FILE.exists():
+            try:
+                with open(OSS_ANNOTATIONS_FILE, 'r') as f: data = json.load(f)
+            except: data = {}
+        entry = data.get(ann_key, {})
+        modifier_fn(entry)
+        entry['_last_updated'] = datetime.utcnow().isoformat() + 'Z'
+        data[ann_key] = entry
+        tmp = OSS_ANNOTATIONS_FILE.with_suffix('.json.tmp')
+        with open(tmp, 'w') as f: json.dump(data, f, indent=2, ensure_ascii=False)
+        if OSS_ANNOTATIONS_FILE.exists():
+            try: shutil.copy2(str(OSS_ANNOTATIONS_FILE), str(OSS_ANNOTATIONS_FILE.with_suffix('.json.bak')))
+            except: pass
+        tmp.rename(OSS_ANNOTATIONS_FILE)
+    return entry
 
 def load_oss_coord_adjustments():
     """Load OSS coordinate adjustments."""
@@ -7649,14 +7668,9 @@ def api_oss_update_justification():
     justification = data.get('justification', '')
 
     ann_key = f"{oss_folder}/{folder_name}"
-    oss_annotations = load_oss_annotations()
-    existing = oss_annotations.get(ann_key, {})
-    edits = existing.get('justification_edits', {})
-    edits[str(step_index)] = justification
-    existing['justification_edits'] = edits
-    oss_annotations[ann_key] = existing
-    save_oss_annotations(oss_annotations, updated_key=ann_key)
-
+    def _modify(e):
+        edits = e.get('justification_edits', {}); edits[str(step_index)] = justification; e['justification_edits'] = edits
+    modify_oss_annotation(ann_key, _modify)
     _sync_overlay_to_oss(oss_folder, folder_name)
     return jsonify({'success': True})
 
@@ -7673,14 +7687,9 @@ def api_oss_update_code():
     code = data.get('code', '')
 
     ann_key = f"{oss_folder}/{folder_name}"
-    oss_annotations = load_oss_annotations()
-    existing = oss_annotations.get(ann_key, {})
-    edits = existing.get('code_edits', {})
-    edits[str(step_index)] = code
-    existing['code_edits'] = edits
-    oss_annotations[ann_key] = existing
-    save_oss_annotations(oss_annotations, updated_key=ann_key)
-
+    def _modify(e):
+        edits = e.get('code_edits', {}); edits[str(step_index)] = code; e['code_edits'] = edits
+    modify_oss_annotation(ann_key, _modify)
     _sync_overlay_to_oss(oss_folder, folder_name)
     return jsonify({'success': True})
 
@@ -7696,14 +7705,9 @@ def api_oss_update_video_time():
     video_time = data.get('video_time', 0)
 
     ann_key = f"{oss_folder}/{folder_name}"
-    oss_annotations = load_oss_annotations()
-    existing = oss_annotations.get(ann_key, {})
-    edits = existing.get('video_time_edits', {})
-    edits[str(step_index)] = video_time
-    existing['video_time_edits'] = edits
-    oss_annotations[ann_key] = existing
-    save_oss_annotations(oss_annotations, updated_key=ann_key)
-
+    def _modify(e):
+        edits = e.get('video_time_edits', {}); edits[str(step_index)] = video_time; e['video_time_edits'] = edits
+    modify_oss_annotation(ann_key, _modify)
     _sync_overlay_to_oss(oss_folder, folder_name)
     return jsonify({'success': True})
 
@@ -7719,12 +7723,8 @@ def api_oss_update_query():
     query = data.get('query', '')
 
     ann_key = f"{oss_folder}/{folder_name}"
-    oss_annotations = load_oss_annotations()
-    existing = oss_annotations.get(ann_key, {})
-    existing['query'] = query
-    oss_annotations[ann_key] = existing
-    save_oss_annotations(oss_annotations, updated_key=ann_key)
-
+    def _modify(e): e['query'] = query
+    modify_oss_annotation(ann_key, _modify)
     _sync_overlay_to_oss(oss_folder, folder_name)
     return jsonify({'success': True})
 
@@ -7742,16 +7742,11 @@ def api_oss_delete_step():
 
     ann_key = f"{oss_folder}/{folder_name}"
 
-    # Track deleted steps by their ORIGINAL index in overlay
-    oss_annotations = load_oss_annotations()
-    existing = oss_annotations.get(ann_key, {})
-    deleted = existing.get('deleted_steps', [])
-    if original_index not in deleted:
-        deleted.append(original_index)
-    existing['deleted_steps'] = sorted(deleted)
-    oss_annotations[ann_key] = existing
-    save_oss_annotations(oss_annotations, updated_key=ann_key)
-
+    def _modify(e):
+        d = e.get('deleted_steps', [])
+        if original_index not in d: d.append(original_index)
+        e['deleted_steps'] = sorted(d)
+    modify_oss_annotation(ann_key, _modify)
     _sync_overlay_to_oss(oss_folder, folder_name)
     return jsonify({'success': True})
 
