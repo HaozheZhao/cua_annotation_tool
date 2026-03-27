@@ -3512,6 +3512,16 @@ DASHBOARD_TEMPLATE = '''
             if (e.key === 'Enter') loadDashboard();
         });
 
+        // Auto-load if folder is in URL params (from back button)
+        (function() {
+            var params = new URLSearchParams(window.location.search);
+            var urlFolder = params.get('folder');
+            if (urlFolder) {
+                document.getElementById('ossFolder').value = urlFolder;
+                loadDashboard();
+            }
+        })();
+
         // ========== Selection System ==========
         var selectedSet = new Set();
         var selectedOrder = [];
@@ -4984,7 +4994,7 @@ OSS_REVIEW_TEMPLATE = '''
         let gridPageSize = 30;
         let detailStepIdx = -1;
 
-        document.getElementById('backLink').href = '/dashboard';
+        document.getElementById('backLink').href = '/dashboard?folder=' + encodeURIComponent(ossFolder);
 
         // If direct access mode, hide recording sidebar and AI check
         if (directMode) {
