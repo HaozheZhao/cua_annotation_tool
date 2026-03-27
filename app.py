@@ -4974,6 +4974,15 @@ OSS_REVIEW_TEMPLATE = '''
     </div>
 
     <script>
+        // Global 401 handler: redirect to login on session expiry
+        var _origFetch = window.fetch;
+        window.fetch = function() {
+            return _origFetch.apply(this, arguments).then(function(resp) {
+                if (resp.status === 401) { alert('Session expired. Please login again.'); window.location.href = '/login'; }
+                return resp;
+            });
+        };
+
         let folderName = '{{ folder_name }}';
         const ossFolder = new URLSearchParams(window.location.search).get('folder') || 'recordings_0303';
         const directMode = new URLSearchParams(window.location.search).get('direct') === '1';
