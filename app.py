@@ -4405,6 +4405,9 @@ OSS_REVIEW_TEMPLATE = '''
         .detail-overlay-close:hover { background: #666; }
         .detail-overlay-body { padding: 16px; }
 
+        .save-toast{position:fixed;bottom:20px;right:20px;padding:8px 16px;border-radius:6px;font-size:0.85em;font-weight:bold;z-index:3000;transition:opacity 0.3s;pointer-events:none}
+        .save-toast.success{background:#4caf50;color:#fff}.save-toast.error{background:#f44336;color:#fff}.save-toast.saving{background:#ff9800;color:#fff}
+
         .loading-overlay {
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
@@ -5253,7 +5256,7 @@ OSS_REVIEW_TEMPLATE = '''
                 if (info.username) infoHtml += '<div class="info-item"><span>Annotator:</span> <b>' + info.username + '</b></div>';
                 if (info.task_id) infoHtml += '<div class="info-item"><span>Task:</span> <b>' + info.task_id + '</b></div>';
                 infoHtml += '<div class="info-item info-item-query"><span>Query:</span> ' +
-                    '<textarea class="query-edit-input" id="query-edit" onchange="saveQuery(this.value)" placeholder="Enter query...">' +
+                    '<textarea class="query-edit-input" id="query-edit" oninput="autoSaveQuery(this.value)" placeholder="Enter query...">' +
                     (info.query || '') + '</textarea></div>';
                 infoHtml += '<div class="info-item"><button class="export-case-btn" onclick="exportCase()">Export Case</button></div>';
                 // Show error count for annotator
@@ -5422,7 +5425,7 @@ OSS_REVIEW_TEMPLATE = '''
 
                 // Code - editable for type/press operations
                 if (step.action === 'type' || step.action === 'press') {
-                    html += '<div class="code code-editable"><input type="text" class="code-edit-input" value="' + (step.code || '').replace(/"/g, '&quot;') + '" onchange="saveCode(' + idx + ', this.value)" title="Edit code" /></div>';
+                    html += '<div class="code code-editable"><input type="text" class="code-edit-input" value="' + (step.code || '').replace(/"/g, '&quot;') + '" oninput="autoSaveCode(' + idx + ', this.value)" title="Edit code" /></div>';
                 } else {
                     html += '<div class="code">' + (step.code || '') + '</div>';
                 }
@@ -5465,7 +5468,7 @@ OSS_REVIEW_TEMPLATE = '''
                 // Justification
                 html += '<div class="justification-edit-area">';
                 html += '<label style="color:#888;font-size:0.78em;display:block;margin-bottom:3px;">Justification:</label>';
-                html += '<textarea class="justification-input" onchange="saveJustification(' + idx + ', this.value)" placeholder="Step justification...">' + (step.justification || '') + '</textarea>';
+                html += '<textarea class="justification-input" oninput="autoSaveJustification(' + idx + ', this.value)" placeholder="Step justification...">' + (step.justification || '') + '</textarea>';
                 html += '</div>';
 
                 // AI check
@@ -5999,7 +6002,7 @@ OSS_REVIEW_TEMPLATE = '''
             html += ' <button class="delete-step-btn" onclick="confirmDeleteStep(' + idx + ')" title="Delete this step">Delete Step</button>';
             html += '</h4>';
             if (step.action === 'type' || step.action === 'press') {
-                html += '<div class="code code-editable"><input type="text" class="code-edit-input" value="' + (step.code || '').replace(/"/g, '&quot;') + '" onchange="saveCode(' + idx + ', this.value)" title="Edit code" /></div>';
+                html += '<div class="code code-editable"><input type="text" class="code-edit-input" value="' + (step.code || '').replace(/"/g, '&quot;') + '" oninput="autoSaveCode(' + idx + ', this.value)" title="Edit code" /></div>';
             } else {
                 html += '<div class="code">' + (step.code || '') + '</div>';
             }
@@ -6033,7 +6036,7 @@ OSS_REVIEW_TEMPLATE = '''
             if (step.description) html += '<div class="description">' + step.description + '</div>';
             html += '<div class="justification-edit-area">';
             html += '<label style="color:#888;font-size:0.78em;display:block;margin-bottom:3px;">Justification:</label>';
-            html += '<textarea class="justification-input" onchange="saveJustification(' + idx + ', this.value)" placeholder="Step justification...">' + (step.justification || '') + '</textarea>';
+            html += '<textarea class="justification-input" oninput="autoSaveJustification(' + idx + ', this.value)" placeholder="Step justification...">' + (step.justification || '') + '</textarea>';
             html += '</div>';
             html += renderAiResultHtml(origIdx);
             html += '</div>';
@@ -6449,16 +6452,23 @@ OSS_REVIEW_TEMPLATE = '''
             }
         }
 
-        // ========== Editable fields ==========
+        // ========== Save with toast + auto-save ==========
+        var _saveToastEl=null,_saveToastTimer=null;
+        function showSaveToast(msg,type){if(!_saveToastEl){_saveToastEl=document.createElement('div');_saveToastEl.className='save-toast';document.body.appendChild(_saveToastEl)}_saveToastEl.textContent=msg;_saveToastEl.className='save-toast '+type;_saveToastEl.style.opacity='1';clearTimeout(_saveToastTimer);if(type!=='saving')_saveToastTimer=setTimeout(function(){_saveToastEl.style.opacity='0'},2000)}
+        var _autoSaveTimers={};
+        function debouncedSave(key,fn){clearTimeout(_autoSaveTimers[key]);_autoSaveTimers[key]=setTimeout(fn,800)}
+        function autoSaveJustification(si,v){var s=taskData&&taskData.steps[si];if(s)s.justification=v;debouncedSave('j'+si,function(){saveJustification(si,v)})}
+        function autoSaveCode(si,v){debouncedSave('c'+si,function(){saveCode(si,v)})}
+        function autoSaveQuery(v){debouncedSave('q',function(){saveQuery(v)})}
 
         async function saveJustification(stepIdx, value) {
-            // Update local data and use original_index for overlay reference
             const step = taskData && taskData.steps[stepIdx];
             if (step) {
                 step.justification = value;
                 const origIdx = step.original_index != null ? step.original_index : stepIdx;
+                showSaveToast('Saving...','saving');
                 try {
-                    await fetch('/api/oss/update_justification', {
+                    var resp = await fetch('/api/oss/update_justification', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({
@@ -6466,7 +6476,8 @@ OSS_REVIEW_TEMPLATE = '''
                             step_index: origIdx, justification: value
                         })
                     });
-                } catch (err) { console.error('Save justification failed:', err); }
+                    if(resp.ok)showSaveToast('Saved \u2713','success');else showSaveToast('Save failed!','error');
+                } catch (err) { showSaveToast('Save failed!','error'); }
             }
         }
 
@@ -6475,8 +6486,9 @@ OSS_REVIEW_TEMPLATE = '''
             if (step) {
                 step.code = value;
                 const origIdx = step.original_index != null ? step.original_index : stepIdx;
+                showSaveToast('Saving...','saving');
                 try {
-                    await fetch('/api/oss/update_code', {
+                    var resp = await fetch('/api/oss/update_code', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({
@@ -6484,7 +6496,8 @@ OSS_REVIEW_TEMPLATE = '''
                             step_index: origIdx, code: value
                         })
                     });
-                } catch (err) { console.error('Save code failed:', err); }
+                    if(resp.ok)showSaveToast('Saved \u2713','success');else showSaveToast('Save failed!','error');
+                } catch (err) { showSaveToast('Save failed!','error'); }
             }
         }
 
@@ -6534,8 +6547,9 @@ OSS_REVIEW_TEMPLATE = '''
         }
 
         async function saveQuery(value) {
+            showSaveToast('Saving...','saving');
             try {
-                await fetch('/api/oss/update_query', {
+                var resp = await fetch('/api/oss/update_query', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
@@ -6543,7 +6557,8 @@ OSS_REVIEW_TEMPLATE = '''
                     })
                 });
                 if (taskData && taskData.annotator_info) taskData.annotator_info.query = value;
-            } catch (err) { console.error('Save query failed:', err); }
+                if(resp.ok)showSaveToast('Saved \u2713','success');else showSaveToast('Save failed!','error');
+            } catch (err) { showSaveToast('Save failed!','error'); }
         }
 
         // ========== Delete step ==========
