@@ -507,8 +507,47 @@ def _safe_save_json_inner(filepath, data):
 
 
 def load_oss_annotations():
-    """Load OSS recording annotations."""
-    return _safe_load_json(OSS_ANNOTATIONS_FILE)
+    """Load OSS recording annotations. Auto-recovers from OSS if local file is empty."""
+    data = _safe_load_json(OSS_ANNOTATIONS_FILE)
+    if not data and not _oss_recovery_attempted:
+        _try_recover_from_oss()
+        data = _safe_load_json(OSS_ANNOTATIONS_FILE)
+    return data
+
+_oss_recovery_attempted = False
+
+def _try_recover_from_oss():
+    global _oss_recovery_attempted
+    _oss_recovery_attempted = True
+    try:
+        import oss_client, oss2
+        logger.warning("Local annotations empty — auto-recovering from OSS...")
+        bucket = oss_client._get_bucket()
+        annotations = {}; coord_adjustments = {}; review_status = {}
+        for folder in ['recordings_0303', 'recordings_0318']:
+            ann_folder = folder + '_annotations'
+            for obj in oss2.ObjectIteratorV2(bucket, prefix=ann_folder + '/'):
+                if obj.is_prefix() or not obj.key.endswith('/overlay.json'): continue
+                parts = obj.key.split('/')
+                if len(parts) < 3: continue
+                rec_name = '/'.join(parts[1:-1])
+                ann_key = f"{folder}/{rec_name}"
+                try:
+                    overlay = json.loads(bucket.get_object(obj.key).read().decode())
+                    case_coords = overlay.pop('coord_adjustments', {})
+                    for si, adj in case_coords.items(): coord_adjustments[f"{ann_key}_{si}"] = adj
+                    annotations[ann_key] = overlay
+                    mark = overlay.get('mark')
+                    if mark == 'pass': review_status[ann_key] = 'reviewed'
+                    elif mark == 'fail': review_status[ann_key] = 'rejected'
+                except Exception: continue
+        if annotations:
+            _safe_save_json(OSS_ANNOTATIONS_FILE, annotations)
+            _safe_save_json(OSS_COORD_ADJUSTMENTS_FILE, coord_adjustments)
+            _safe_save_json(REVIEW_STATUS_FILE, review_status)
+            logger.warning(f"Auto-recovered {len(annotations)} annotations from OSS")
+    except Exception as e:
+        logger.error(f"Auto-recovery failed: {e}")
 
 def save_oss_annotations(annotations, updated_key=None):
     """Save OSS recording annotations. If updated_key provided, updates its _last_updated."""
