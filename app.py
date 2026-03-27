@@ -3460,7 +3460,7 @@ DASHBOARD_TEMPLATE = '''
                     '</div>' +
                     '<div class="task-actions">' +
                     '<span class="review-badge ' + statusClass + '">' + statusLabel + '</span>' +
-                    (function(){var ak=folder+'/'+rec.folder_name;var s=selectedSet.has(ak);return '<button class="btn-select'+(s?' selected':'')+'" data-key="'+ak+'" onclick="event.stopPropagation();toggleSelect(this,\''+ak.replace(/'/g,"\\'")+'\')">'+(s?'Deselect':'Select')+'</button>'})() +
+                    (function(){var ak=folder+'/'+rec.folder_name;var s=selectedSet.has(ak);return '<button class="btn-select'+(s?' selected':'')+'" data-key="'+ak+'" onclick="event.stopPropagation();toggleSelect(this,\''+ak.replace(/'/g,"\'")+'\')">'+(s?'Deselect':'Select')+'</button>'})() +
                     '<a class="btn-view" href="/oss_review/' + encodeURIComponent(rec.folder_name) + '?folder=' + encodeURIComponent(folder) + '">View</a>' +
                     '</div></div>';
             });
@@ -3527,7 +3527,7 @@ DASHBOARD_TEMPLATE = '''
         var selectedOrder = [];
         async function loadSelection(){try{var r=await fetch('/api/selected_cases');var d=await r.json();selectedOrder=d.cases||[];selectedSet=new Set(selectedOrder);renderSelPanel()}catch(e){}}
         function renderSelPanel(){document.getElementById('selCount').textContent=selectedOrder.length;
-            var h='';selectedOrder.forEach(function(k,i){var nm=k.split('/').pop().substring(0,30);h+='<div class="sel-item"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(i+1)+'. '+nm+'</span><span style="color:#f44336;cursor:pointer;margin-left:4px" onclick="removeFromSel(\''+k.replace(/'/g,"\\'")+'\')">&times;</span></div>'});
+            var h='';selectedOrder.forEach(function(k,i){var nm=k.split('/').pop().substring(0,30);h+='<div class="sel-item"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(i+1)+'. '+nm+'</span><span style="color:#f44336;cursor:pointer;margin-left:4px" onclick="removeFromSel(\''+k.replace(/'/g,"\'")+'\')">&times;</span></div>'});
             document.getElementById('selList').innerHTML=h||'<div style="padding:10px;color:#555;font-size:0.75em;text-align:center">No cases selected</div>';
             document.querySelectorAll('.btn-select').forEach(function(b){var k=b.getAttribute('data-key');if(selectedSet.has(k)){b.classList.add('selected');b.textContent='Deselect'}else{b.classList.remove('selected');b.textContent='Select'}})}
         async function toggleSelect(btn,ak){var r=await fetch('/api/selected_cases/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ann_key:ak})});var d=await r.json();
@@ -5086,7 +5086,7 @@ OSS_REVIEW_TEMPLATE = '''
                 const isExpanded = !!expandedPersons[user];
                 const color = hashColor(user);
                 const letter = user.charAt(0).toUpperCase();
-                const safeUser = user.replace(/'/g, "\\\'");
+                const safeUser = user.replace(/'/g, "\\'");
 
                 html += '<div class="person-group">';
                 html += '<div class="person-header" onclick="togglePerson(\'' + safeUser + '\')">';
@@ -5123,14 +5123,14 @@ OSS_REVIEW_TEMPLATE = '''
                     const nStatusLabel = nStatus.charAt(0).toUpperCase() + nStatus.slice(1);
                     const nTitle = nRec.task_name || nRec.task_id || nRec.folder_name.substring(0, 30);
                     html += '<div class="rec-item ' + nStatus + (nIsActive ? ' active' : '') + '" ' +
-                        'onclick="switchRecording(\'' + nRec.folder_name.replace(/'/g, "\\\'") + '\')">' +
+                        'onclick="switchRecording(\'' + nRec.folder_name.replace(/'/g, "\\'") + '\')">' +
                         '<div class="rec-title" title="' + nRec.folder_name + '">' + nTitle + '</div>' +
                         '<span class="rec-status ' + nStatus + '">' + nStatusLabel + '</span>' +
                         '</div>';
 
                     // Older versions toggle
                     if (hasOlder) {
-                        const safeBase = base.replace(/'/g, "\\\'");
+                        const safeBase = base.replace(/'/g, "\\'");
                         const vExpanded = !!expandedVersionGroups[base];
                         html += '<div class="version-toggle" onclick="event.stopPropagation();toggleVersionGroup(\'' + safeBase + '\')">';
                         html += (vExpanded ? '&#9660; ' : '&#9654; ') + (versions.length - 1) + ' older version(s)';
@@ -5143,7 +5143,7 @@ OSS_REVIEW_TEMPLATE = '''
                                 const oStatusLabel = oStatus.charAt(0).toUpperCase() + oStatus.slice(1);
                                 const oTitle = oRec.task_name || oRec.task_id || oRec.folder_name.substring(0, 30);
                                 html += '<div class="rec-item older-version ' + oStatus + (oIsActive ? ' active' : '') + '" ' +
-                                    'onclick="switchRecording(\'' + oRec.folder_name.replace(/'/g, "\\\'") + '\')">' +
+                                    'onclick="switchRecording(\'' + oRec.folder_name.replace(/'/g, "\\'") + '\')">' +
                                     '<div class="rec-title" title="' + oRec.folder_name + '">' + oTitle + '</div>' +
                                     '<span class="rec-status ' + oStatus + '">' + oStatusLabel + '</span>' +
                                     '</div>';
@@ -6256,7 +6256,7 @@ OSS_REVIEW_TEMPLATE = '''
                 kHtml += '<div class="knowledge-item"><label>' + f.label + '</label>';
                 kHtml += '<div class="knowledge-tags">';
                 tags.forEach(tag => {
-                    kHtml += '<span class="knowledge-tag">' + tag + '<span class="remove-tag" onclick="removeTag(\'' + f.key + '\',\'' + tag.replace(/'/g, "\\\'") + '\')">x</span></span>';
+                    kHtml += '<span class="knowledge-tag">' + tag + '<span class="remove-tag" onclick="removeTag(\'' + f.key + '\',\'' + tag.replace(/'/g, "\\'") + '\')">x</span></span>';
                 });
                 kHtml += '</div>';
                 kHtml += '<div class="knowledge-input-row">';
