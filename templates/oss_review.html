@@ -2174,23 +2174,28 @@
                 else step.code = 'pyautogui.click(' + x + ', ' + y + ')';
             }
             stackedFinetuneIdx = null;
-            // Update in-place instead of re-rendering all steps (prevents image flash)
+            // Update display in-place (prevents image flash from full re-render)
             var card = document.getElementById('stacked-step-' + idx);
             if (card) {
+                // Update code text
                 var codeEl = card.querySelector('.code');
-                if (codeEl) codeEl.textContent = step.code;
+                if (codeEl) {
+                    var inp = codeEl.querySelector('.code-edit-input');
+                    if (inp) inp.value = step.code;
+                    else codeEl.textContent = step.code;
+                }
+                // Update description
                 var descEl = card.querySelector('.description');
                 if (descEl) descEl.textContent = step.description || '';
+                // Hide finetune panel
                 var panel = card.querySelector('.coord-adjust-panel');
-                if (panel) panel.style.display = 'none';
+                if (panel) panel.classList.remove('show');
                 // Re-add markers with new coordinates
-                var imgEl = card.querySelector('img');
+                var imgEl = document.getElementById('stacked-img-el-' + idx);
                 if (imgEl) {
-                    var container = imgEl.parentElement;
-                    container.querySelectorAll('.click-marker, svg.drag-line, .scroll-arrow').forEach(function(m){m.remove()});
                     var vw = taskData.video_width || 1920;
                     var vh = taskData.video_height || 1080;
-                    addMarkersToContainer(container.id, imgEl, step, vw, vh);
+                    addMarkersToContainer('stacked-img-' + idx, imgEl, step, vw, vh);
                 }
             }
             renderStepSidebar();
