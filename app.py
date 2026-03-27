@@ -5220,10 +5220,9 @@ OSS_REVIEW_TEMPLATE = '''
             aiCheckStartTime = null;
             showAiProgress(false);
             const aiBtn = document.getElementById('aiCheckBtn');
-            aiBtn.classList.remove('running');
-            aiBtn.textContent = 'AI Check';
-            document.getElementById('aiCheckStatus').textContent = '';
-            document.getElementById('aiCheckStatus').style.color = '#888';
+            if(aiBtn){aiBtn.classList.remove('running');aiBtn.textContent='AI Check';}
+            var aiSt=document.getElementById('aiCheckStatus');
+            if(aiSt){aiSt.textContent='';aiSt.style.color='#888';}
             document.getElementById('loadingOverlay').style.display = 'flex';
             loadTask();
             renderRecordingSidebar();
@@ -6460,10 +6459,10 @@ OSS_REVIEW_TEMPLATE = '''
             }).length;
 
             const pct = totalSteps > 0 ? Math.round((reviewedCount / totalSteps) * 100) : 0;
-            document.getElementById('reviewProgressText').innerHTML =
-                'Errors: <b style="color:#f44336">' + errorCount + '</b> | Reviewed: ' + reviewedCount + '/' + totalSteps;
-            document.getElementById('reviewProgressFill').style.width = pct + '%';
-            document.getElementById('reviewProgressContainer').style.display = 'flex';
+            var pt=document.getElementById('reviewProgressText'),pf=document.getElementById('reviewProgressFill'),pc=document.getElementById('reviewProgressContainer');
+            if(pt)pt.innerHTML='Errors: <b style="color:#f44336">'+errorCount+'</b> | Reviewed: '+reviewedCount+'/'+totalSteps;
+            if(pf)pf.style.width=pct+'%';
+            if(pc)pc.style.display='flex';
         }
 
         function updateRecSidebarStatus() {
@@ -7035,10 +7034,8 @@ OSS_REVIEW_TEMPLATE = '''
         function nextStep() { if (taskData && currentStep < taskData.steps.length - 1) selectStep(currentStep + 1); }
 
         function updateReviewUI() {
-            document.getElementById('reviewStatus').textContent = reviewStatus;
-            document.getElementById('reviewStatus').style.color =
-                reviewStatus === 'reviewed' ? '#4caf50' :
-                reviewStatus === 'rejected' ? '#f44336' : '#888';
+            var el = document.getElementById('reviewStatus');
+            if (el) { el.textContent = reviewStatus; el.style.color = reviewStatus === 'reviewed' ? '#4caf50' : reviewStatus === 'rejected' ? '#f44336' : '#888'; }
             ['reviewed', 'rejected', 'unreviewed'].forEach(s => {
                 const btn = document.getElementById('btn' + s.charAt(0).toUpperCase() + s.slice(1));
                 if (btn) btn.classList.toggle('active', reviewStatus === s);
