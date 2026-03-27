@@ -5734,7 +5734,24 @@ OSS_REVIEW_TEMPLATE = '''
                 else step.code = 'pyautogui.click(' + x + ', ' + y + ')';
             }
             stackedFinetuneIdx = null;
-            renderAllStepsStacked();
+            // Update display in-place (prevents image flash)
+            var card = document.getElementById('stacked-step-' + idx);
+            if (card) {
+                var codeEl = card.querySelector('.code');
+                if (codeEl) {
+                    var inp = codeEl.querySelector('.code-edit-input');
+                    if (inp) inp.value = step.code;
+                    else codeEl.textContent = step.code;
+                }
+                var descEl = card.querySelector('.description');
+                if (descEl) descEl.textContent = step.description || '';
+                var panel = card.querySelector('.coord-adjust-panel');
+                if (panel) panel.classList.remove('show');
+                var imgEl = document.getElementById('stacked-img-el-' + idx);
+                if (imgEl) {
+                    addMarkersToContainer('stacked-img-' + idx, imgEl, step, taskData.video_width || 1920, taskData.video_height || 1080);
+                }
+            }
             renderStepSidebar();
         }
 
