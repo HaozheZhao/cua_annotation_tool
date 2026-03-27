@@ -8992,6 +8992,20 @@ if __name__ == '__main__':
     print(f"CSV file: {CSV_FILE}")
     print(f"Output directory: {OUTPUT_DIR}")
     print(f"OSS cache: {OSS_CACHE_DIR}")
+    # Always sync annotations from OSS on startup
+    print("Syncing annotations from OSS...")
+    try:
+        data = _safe_load_json(OSS_ANNOTATIONS_FILE)
+        if not data:
+            print("  Local annotations empty — recovering from OSS...")
+            _try_recover_from_oss()
+            data = _safe_load_json(OSS_ANNOTATIONS_FILE)
+            print(f"  Recovered {len(data)} annotations")
+        else:
+            print(f"  Local annotations OK: {len(data)} entries")
+    except Exception as e:
+        print(f"  Warning: {e}")
+
     print(f"\nStarting server at: http://{args.host}:{args.port}")
     print(f"Dashboard: http://{args.host}:{args.port}/dashboard")
     print(f"Direct access: http://{args.host}:{args.port}/edit")
