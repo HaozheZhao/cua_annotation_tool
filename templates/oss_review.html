@@ -1383,7 +1383,7 @@
         let gridPageSize = 30;
         let detailStepIdx = -1;
 
-        document.getElementById('backLink').href = '/dashboard';
+        document.getElementById('backLink').href = '/dashboard?folder=' + encodeURIComponent(ossFolder);
 
         // If direct access mode, hide recording sidebar (but keep AI check visible)
         if (directMode) {

@@ -595,6 +595,16 @@
             if (e.key === 'Enter') loadDashboard();
         });
 
+        // Auto-load if folder is in URL params (from back button)
+        (function() {
+            var params = new URLSearchParams(window.location.search);
+            var urlFolder = params.get('folder');
+            if (urlFolder) {
+                document.getElementById('ossFolder').value = urlFolder;
+                loadDashboard();
+            }
+        })();
+
         // ========== Selection System ==========
         var selectedSet = new Set();
         var selectedOrder = [];
