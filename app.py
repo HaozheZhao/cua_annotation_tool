@@ -2903,13 +2903,38 @@ def api_selected_cases_export():
                 steps = task_data.get('steps', [])
                 justification_edits = ann.get('justification_edits', {})
                 code_edits = ann.get('code_edits', {})
+                video_time_edits = ann.get('video_time_edits', {})
                 deleted_steps = set(ann.get('deleted_steps', []))
                 for step in steps:
                     si = str(step['index'])
+                    adj_key_s = f"{ann_key}_{step['index']}"
+                    # Apply coord adjustments
+                    if adj_key_s in coord_adjustments:
+                        adj = coord_adjustments[adj_key_s]
+                        step['coordinate'] = {'x': adj['x'], 'y': adj['y']}
+                        x, y = adj['x'], adj['y']
+                        code = step.get('code', '')
+                        if 'moveTo' in code and 'dragTo' in code:
+                            drag_adj = adj.get('drag_to', {})
+                            if drag_adj:
+                                step['code'] = f"pyautogui.moveTo({x}, {y}); pyautogui.dragTo({drag_adj['x']}, {drag_adj['y']})"
+                                step['drag_to'] = {'x': drag_adj['x'], 'y': drag_adj['y']}
+                            else:
+                                match = re.search(r'dragTo\((\d+),\s*(\d+)\)', code)
+                                if match:
+                                    step['code'] = f"pyautogui.moveTo({x}, {y}); pyautogui.dragTo({match.group(1)}, {match.group(2)})"
+                        elif 'doubleClick' in code:
+                            step['code'] = f"pyautogui.doubleClick({x}, {y})"
+                        elif 'rightClick' in code:
+                            step['code'] = f"pyautogui.rightClick({x}, {y})"
+                        elif 'click' in code.lower() and 'pyautogui.click' in code:
+                            step['code'] = f"pyautogui.click({x}, {y})"
                     if si in justification_edits:
                         step['justification'] = justification_edits[si]
                     if si in code_edits:
                         step['code'] = code_edits[si]
+                    if si in video_time_edits:
+                        step['video_time'] = video_time_edits[si]
                 if deleted_steps:
                     steps = [s for s in steps if s['index'] not in deleted_steps]
 
