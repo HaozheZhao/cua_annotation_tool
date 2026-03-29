@@ -8273,11 +8273,27 @@ def api_selected_cases_export():
                 task_data = load_oss_task_data(local_dir)
                 if not task_data: continue
                 steps = task_data.get('steps', [])
-                je = ann.get('justification_edits', {}); ce = ann.get('code_edits', {}); ds = set(ann.get('deleted_steps', []))
+                je = ann.get('justification_edits', {}); ce = ann.get('code_edits', {}); vte = ann.get('video_time_edits', {}); ds = set(ann.get('deleted_steps', []))
                 for s in steps:
                     si = str(s['index'])
+                    adj_k = f"{ann_key}_{s['index']}"
+                    if adj_k in coord_adjustments:
+                        adj = coord_adjustments[adj_k]
+                        s['coordinate'] = {'x': adj['x'], 'y': adj['y']}
+                        x, y = adj['x'], adj['y']
+                        code = s.get('code', '')
+                        if 'moveTo' in code and 'dragTo' in code:
+                            da = adj.get('drag_to', {})
+                            if da: s['code'] = f"pyautogui.moveTo({x}, {y}); pyautogui.dragTo({da['x']}, {da['y']})"; s['drag_to'] = da
+                            else:
+                                m = re.search(r'dragTo\((\d+),\s*(\d+)\)', code)
+                                if m: s['code'] = f"pyautogui.moveTo({x}, {y}); pyautogui.dragTo({m.group(1)}, {m.group(2)})"
+                        elif 'doubleClick' in code: s['code'] = f"pyautogui.doubleClick({x}, {y})"
+                        elif 'rightClick' in code: s['code'] = f"pyautogui.rightClick({x}, {y})"
+                        elif 'click' in code.lower() and 'pyautogui.click' in code: s['code'] = f"pyautogui.click({x}, {y})"
                     if si in je: s['justification'] = je[si]
                     if si in ce: s['code'] = ce[si]
+                    if si in vte: s['video_time'] = vte[si]
                 if ds: steps = [s for s in steps if s['index'] not in ds]
                 traj = [{'index':s['index'],'action_type':s.get('action',''),'code':s.get('code',''),'screenshot':f"step_{s['index']}.png",'coordinate':s.get('coordinate',{}),'justification':s.get('justification',''),'description':s.get('description','')} for s in steps]
                 info = task_data.get('annotator_info', {})
